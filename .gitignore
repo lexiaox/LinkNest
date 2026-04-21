@@ -1,0 +1,41 @@
+# client
+client/node_modules/
+client/dist/
+client/build/
+
+# server
+server/node_modules/
+server/dist/
+server/build/
+server/tmp/
+
+# Python server
+server/venv/
+server/__pycache__/
+
+# Go
+server/bin/
+
+# logs
+server/logs/
+client/logs/# client
+client/node_modules/
+client/dist/
+client/build/
+
+# server
+server/node_modules/
+server/dist/
+server/build/
+server/tmp/
+
+# Python server
+server/venv/
+server/__pycache__/
+
+# Go
+server/bin/
+
+# logs
+server/logs/
+client/logs/v
