@@ -1,41 +1,34 @@
-# client
-client/node_modules/
-client/dist/
-client/build/
+# dependencies
+**/node_modules/
 
-# server
-server/node_modules/
-server/dist/
-server/build/
-server/tmp/
+# build output
+**/dist/
+**/build/
+**/tmp/
+**/coverage/
 
-# Python server
-server/venv/
-server/__pycache__/
+# environment files
+**/.env
+**/.env.*
+!**/.env.example
 
-# Go
-server/bin/
-
-# logs
-server/logs/
-client/logs/# client
-client/node_modules/
-client/dist/
-client/build/
-
-# server
-server/node_modules/
-server/dist/
-server/build/
-server/tmp/
-
-# Python server
-server/venv/
-server/__pycache__/
+# Python
+**/venv/
+**/__pycache__/
 
 # Go
-server/bin/
+**/bin/
 
 # logs
-server/logs/
-client/logs/v
+**/logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
