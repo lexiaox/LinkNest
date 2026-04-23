@@ -1,62 +1,20 @@
 # LinkNest
 
-LinkNest 是一个面向动态网络环境的多端数据传输与云端资源调度系统。本仓库当前已经按《LinkNest 项目方案书 V1》落地出可运行的服务端、CLI 和基础 Web UI，用于验证设备注册、在线状态维护、分片上传、断点续传和文件下载这条主链路。
+LinkNest 是一个可运行的多端文件传输原型，提供服务端、Web UI、CLI 和 Docker 部署方式。你可以把它部署到自己的服务器上，然后通过浏览器或 CLI 登录同一个账号、绑定设备、上传文件、下载文件和查看任务状态。
 
-## 当前状态
+## 我能用它做什么
 
-项目处于 V1 可运行原型阶段，已经完成核心工程骨架和主要业务闭环：
+- 在自己的服务器上部署一个可访问的文件传输服务
+- 用浏览器登录账号，查看设备、文件和任务
+- 用 CLI 把当前电脑绑定成一个设备并保持在线
+- 上传大文件、断点续传、补传缺失分片
+- 在其他设备上查看文件并下载
 
-- 用户注册、登录和 Bearer Token 鉴权
-- 多设备绑定与稳定 Device ID
-- 设备 WebSocket 心跳与在线状态维护
-- 文件初始化上传、缺失分片查询、分片补传、合并校验和下载
-- Go CLI 原型
-- 基础 Web UI：登录页、设备页、文件页、任务页
-- Docker 打包与容器部署
+## 作为部署者怎么启动服务
 
-## V1 目标与边界
+### 本地直接运行
 
-V1 优先完成这些能力：
-
-- 同一账号下多设备注册和在线管理
-- 文件上传到云端资源池并保存元数据
-- 大文件分片上传、SHA-256 校验和断点续传
-- 其他设备查看文件列表并下载
-- 用 CLI 和 Web UI 验证完整链路
-
-V1 暂不实现：
-
-- 局域网 P2P 直连传输
-- WebRTC / QUIC 传输
-- 完整文件夹同步
-- 端到端加密
-- AI 文件助手
-- Flutter 多端客户端
-
-## 技术方向
-
-| 层级 | 当前实现 | 作用 |
-| --- | --- | --- |
-| 服务端 | Go 单体服务 | 用户、设备、文件、上传任务、Web UI |
-| CLI 客户端 | Go | 认证、设备注册、上传下载、任务恢复 |
-| Web UI | 原生 HTML / CSS / JS | 登录、设备、文件、任务状态页 |
-| 数据库 | SQLite | 用户、设备、文件、任务和分片元数据 |
-| 文件存储 | 本地磁盘 | 临时分片和合并后的文件 |
-
-## 目录结构
-
-- `server/`：服务端代码、迁移脚本和内置静态资源
-- `client/`：CLI 客户端代码
-- `docs/`：API 文档和开发计划
-- `deploy/`：本地与 Docker 配置模板
-- `Dockerfile`：服务端镜像构建文件
-- `docker-compose.yml`：容器部署模板
-
-每一层目录都带有 `README.md`，用于说明目录职责、文件结构和文件用途。
-
-## 快速运行
-
-1. 设置环境变量：
+1. 设置服务端密钥：
 
 ```bash
 export LINKNEST_JWT_SECRET='replace-with-local-secret'
@@ -68,62 +26,151 @@ export LINKNEST_JWT_SECRET='replace-with-local-secret'
 go run ./server/cmd/linknest-server --config ./deploy/config.example.yaml
 ```
 
-3. 初始化账号和设备：
+3. 检查服务是否启动成功：
 
 ```bash
-go run ./client/cmd/linknest setup --register --username demo --email demo@example.com --password password
-go run ./client/cmd/linknest online
+curl http://127.0.0.1:8080/healthz
 ```
 
-如果账号已经存在，可以直接：
+如果返回 `{"status":"ok"}`，说明服务已经可用。
 
-```bash
-go run ./client/cmd/linknest setup --username demo --password password
-go run ./client/cmd/linknest online
-```
+### 用 Docker Compose 部署
 
-旧的 `auth ...` 和 `device ...` 分步命令仍然保留，主要用于调试和脚本化场景。
-
-4. 上传和下载文件：
-
-```bash
-go run ./client/cmd/linknest file upload ./demo.zip
-go run ./client/cmd/linknest file list
-go run ./client/cmd/linknest file download <file_id> --output ./downloaded-demo.zip
-go run ./client/cmd/linknest task list
-go run ./client/cmd/linknest task resume <upload_id>
-```
-
-## Web UI
-
-服务启动后可直接访问：
-
-- `/login`
-- `/devices`
-- `/files`
-- `/tasks`
-
-## Docker 部署
-
-### 直接构建并运行
-
-```bash
-docker build -t linknest-server:latest .
-docker run -d \
-  --name linknest-server \
-  --restart unless-stopped \
-  -p 8080:8080 \
-  -e LINKNEST_JWT_SECRET='replace-with-server-secret' \
-  -v linknest-data:/var/lib/linknest \
-  linknest-server:latest
-```
-
-### 使用 Compose
+1. 设置服务端密钥：
 
 ```bash
 export LINKNEST_JWT_SECRET='replace-with-server-secret'
+```
+
+2. 启动服务：
+
+```bash
 docker compose up -d --build
 ```
+
+3. 检查状态：
+
+```bash
+docker compose ps
+curl http://127.0.0.1:8080/healthz
+```
+
+### 作为服务器管理员，你至少会用到这些入口
+
+- 登录页：`http://<server>:8080/login`
+- 设备页：`http://<server>:8080/devices`
+- 文件页：`http://<server>:8080/files`
+- 任务页：`http://<server>:8080/tasks`
+- 健康检查：`http://<server>:8080/healthz`
+
+如果你部署时做了反向代理或端口映射，比如把公网 `80` 转发到容器 `8080`，把上面的 `:8080` 替换成你的实际访问地址即可。
+
+## 作为普通用户怎么登录和使用 Web UI
+
+1. 打开登录页：
+
+```text
+http://<server>:8080/login
+```
+
+2. 使用同一个账号注册或登录。
+
+3. 登录后按页面使用：
+
+- `Devices`：查看当前账号下的设备和在线状态
+- `Files`：上传文件、查看文件列表、下载文件
+- `Tasks`：查看上传任务、续传状态和进度
+
+### 手机怎么用
+
+- 手机当前通过浏览器访问同一个账号即可使用
+- 当前是 Web 使用方式，不是原生 App
+- 手机可以登录、查看设备、查看文件、上传下载
+- 当前“正式设备绑定”主要由 CLI 客户端完成，手机浏览器更适合作为 Web 用户入口
+
+## 作为 CLI 用户怎么绑定设备和保持在线
+
+### 新用户
+
+```bash
+go run ./client/cmd/linknest setup --register --username demo --email demo@example.com --password password
+```
+
+这条命令会一次性完成：
+
+- 注册账号
+- 登录账号
+- 初始化当前设备
+- 把当前设备注册到服务器
+
+### 已有账号用户
+
+```bash
+go run ./client/cmd/linknest setup --username demo --password password
+```
+
+这条命令会一次性完成：
+
+- 登录账号
+- 初始化当前设备
+- 把当前设备注册到服务器
+
+### 保持设备在线
+
+```bash
+go run ./client/cmd/linknest online
+```
+
+这会持续发送设备心跳，让当前设备在设备页里显示为在线。
+
+## 怎么上传、下载、查看任务
+
+### 通过 Web UI
+
+1. 进入文件页：`http://<server>:8080/files`
+2. 选择文件后上传
+3. 在任务页：`http://<server>:8080/tasks` 查看进度
+4. 在文件页中下载目标文件
+
+### 通过 CLI
+
+上传文件：
+
+```bash
+go run ./client/cmd/linknest file upload ./demo.zip
+```
+
+查看文件列表：
+
+```bash
+go run ./client/cmd/linknest file list
+```
+
+下载文件：
+
+```bash
+go run ./client/cmd/linknest file download <file_id> --output ./downloaded-demo.zip
+```
+
+查看任务列表：
+
+```bash
+go run ./client/cmd/linknest task list
+```
+
+继续未完成任务：
+
+```bash
+go run ./client/cmd/linknest task resume <upload_id>
+```
+
+## 常见访问入口
+
+- 登录页：`/login`
+- 设备页：`/devices`
+- 文件页：`/files`
+- 任务页：`/tasks`
+- 健康检查：`/healthz`
 
 ## 默认路径
 
@@ -134,11 +181,12 @@ docker compose up -d --build
 - Docker 文件存储：`/var/lib/linknest/storage`
 - Docker 分片目录：`/var/lib/linknest/chunks`
 
-## 协作约定
+## 补充文档入口
 
-- `main` 分支保持可用状态
-- 功能改动通过 Pull Request 合并
-- 不提交密钥、token、`.env`、私钥或本地数据库文件
-- 涉及行为变化时同步更新 README、API 文档或开发计划
+- `client/`：CLI 客户端代码和模块说明
+- `server/`：服务端代码、迁移脚本和 Web 资源
+- `deploy/`：本地和 Docker 配置模板
+- `docs/api.md`：API 说明
+- `docs/dev-plan.md`：开发计划
 
-更多细节见各级目录下的 `README.md` 与 `docs/` 文档。
+各级目录下也都带有 `README.md`，用于说明该目录的职责、结构和文件用途。
