@@ -71,12 +71,18 @@ go run ./server/cmd/linknest-server --config ./deploy/config.example.yaml
 3. 初始化账号和设备：
 
 ```bash
-go run ./client/cmd/linknest auth register --username demo --email demo@example.com --password password
-go run ./client/cmd/linknest auth login --username demo --password password
-go run ./client/cmd/linknest device init --name demo-pc --type linux
-go run ./client/cmd/linknest device register
-go run ./client/cmd/linknest device heartbeat
+go run ./client/cmd/linknest setup --register --username demo --email demo@example.com --password password
+go run ./client/cmd/linknest online
 ```
+
+如果账号已经存在，可以直接：
+
+```bash
+go run ./client/cmd/linknest setup --username demo --password password
+go run ./client/cmd/linknest online
+```
+
+旧的 `auth ...` 和 `device ...` 分步命令仍然保留，主要用于调试和脚本化场景。
 
 4. 上传和下载文件：
 
