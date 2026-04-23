@@ -8,7 +8,9 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -46,21 +48,30 @@ func Init(root string, deviceName string, deviceType string, version string) (Pr
 	deviceType = strings.TrimSpace(deviceType)
 	version = strings.TrimSpace(version)
 
-	if deviceName == "" || deviceType == "" {
-		return Profile{}, errors.New("device name and type are required")
+	if deviceName == "" {
+		deviceName = DefaultDeviceName()
+	}
+	if deviceType == "" {
+		deviceType = DefaultDeviceType()
 	}
 	if version == "" {
 		version = "0.1.0"
 	}
 
 	if profile, err := Load(root); err == nil {
-		if profile.DeviceName == "" {
+		if deviceName != "" {
+			profile.DeviceName = deviceName
+		} else if profile.DeviceName == "" {
 			profile.DeviceName = deviceName
 		}
-		if profile.DeviceType == "" {
+		if deviceType != "" {
+			profile.DeviceType = deviceType
+		} else if profile.DeviceType == "" {
 			profile.DeviceType = deviceType
 		}
-		if profile.ClientVersion == "" {
+		if version != "" {
+			profile.ClientVersion = version
+		} else if profile.ClientVersion == "" {
 			profile.ClientVersion = version
 		}
 		if err := Save(root, profile); err != nil {
@@ -80,6 +91,25 @@ func Init(root string, deviceName string, deviceType string, version string) (Pr
 		return Profile{}, err
 	}
 	return profile, nil
+}
+
+func DefaultDeviceName() string {
+	hostname, err := os.Hostname()
+	if err == nil {
+		hostname = strings.TrimSpace(hostname)
+	}
+	if hostname == "" {
+		return "linknest-device"
+	}
+	return hostname
+}
+
+func DefaultDeviceType() string {
+	deviceType := strings.TrimSpace(runtime.GOOS)
+	if deviceType == "" {
+		return "unknown"
+	}
+	return deviceType
 }
 
 func Load(root string) (Profile, error) {
