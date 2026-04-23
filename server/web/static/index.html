@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LinkNest Web UI</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body class="landing-page">
+    <main class="landing-shell">
+      <section class="hero-panel">
+        <span class="hero-badge">LinkNest V1 内置 Web UI</span>
+        <h1>在浏览器里看设备、文件和任务状态</h1>
+        <p class="hero-copy">
+          当前 UI 已经覆盖登录页、设备页、文件页和任务页，并且文件页支持直接走
+          V1 分片上传链路。
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="/login">进入登录页</a>
+          <a class="button" href="/devices">设备页</a>
+          <a class="button" href="/files">文件页</a>
+          <a class="button" href="/tasks">任务页</a>
+        </div>
+      </section>
+      <section class="hero-grid">
+        <article class="metric-card">
+          <strong>认证</strong>
+          <span>登录后 token 保存在浏览器本地，页面自动带 Bearer Token 调用 API。</span>
+        </article>
+        <article class="metric-card">
+          <strong>设备</strong>
+          <span>设备页展示 device_id、设备类型、在线状态、最近心跳和局域网地址。</span>
+        </article>
+        <article class="metric-card">
+          <strong>文件</strong>
+          <span>文件页支持浏览器端分片上传、文件列表刷新和带鉴权下载。</span>
+        </article>
+        <article class="metric-card">
+          <strong>任务</strong>
+          <span>任务页展示 upload_id、文件名、分片进度、状态和最近更新时间。</span>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

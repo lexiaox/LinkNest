@@ -1,169 +1,138 @@
 # LinkNest
 
-LinkNest 是一个面向动态网络环境的多端数据传输与云端资源调度系统。它通过稳定设备身份、云端在线状态维护、云端资源索引、断点续传和后续局域网直连能力，实现多设备之间更可靠的数据传输。
+LinkNest 是一个面向动态网络环境的多端数据传输与云端资源调度系统。本仓库当前已经按《LinkNest 项目方案书 V1》落地出可运行的服务端、CLI 和基础 Web UI，用于验证设备注册、在线状态维护、分片上传、断点续传和文件下载这条主链路。
 
 ## 当前状态
 
-项目正在开发中。
+项目处于 V1 可运行原型阶段，已经完成核心工程骨架和主要业务闭环：
 
-本仓库后续会作为 LinkNest 的主开发仓库，当前 README 根据《LinkNest V1 技术实施方案书》整理，用于统一项目方向和第一版开发边界。
+- 用户注册、登录和 Bearer Token 鉴权
+- 多设备绑定与稳定 Device ID
+- 设备 WebSocket 心跳与在线状态维护
+- 文件初始化上传、缺失分片查询、分片补传、合并校验和下载
+- Go CLI 原型
+- 基础 Web UI：登录页、设备页、文件页、任务页
+- Docker 打包与容器部署
 
-## V1 目标
+## V1 目标与边界
 
-LinkNest V1 优先完成以下能力：
+V1 优先完成这些能力：
 
-- 用户注册、登录和 Bearer Token 鉴权。
-- 多设备绑定，每台设备拥有稳定的 Device ID。
-- 设备通过 WebSocket 心跳上报在线状态和局域网信息。
-- 文件上传到云端资源池，并保存文件元数据。
-- 同一用户下的其他设备可以查看文件列表并下载。
-- 大文件支持分片上传、断点续传和 SHA-256 hash 校验。
-- 提供 Go CLI 原型和基础 Web UI，用于验证完整流程。
+- 同一账号下多设备注册和在线管理
+- 文件上传到云端资源池并保存元数据
+- 大文件分片上传、SHA-256 校验和断点续传
+- 其他设备查看文件列表并下载
+- 用 CLI 和 Web UI 验证完整链路
 
-## V1 不做什么
+V1 暂不实现：
 
-为了先完成核心链路，V1 暂不实现：
-
-- 局域网 P2P 直连传输。
-- WebRTC / QUIC 传输。
-- 完整文件夹同步。
-- 端到端加密。
-- AI 文件助手。
-- 完整 Flutter 多端客户端。
-
-这些能力会作为后续版本扩展，V1 只预留必要的数据模型和接口边界。
+- 局域网 P2P 直连传输
+- WebRTC / QUIC 传输
+- 完整文件夹同步
+- 端到端加密
+- AI 文件助手
+- Flutter 多端客户端
 
 ## 技术方向
 
-V1 计划采用单体服务端 + 轻量客户端架构：
-
-| 层级 | 计划技术 | 作用 |
+| 层级 | 当前实现 | 作用 |
 | --- | --- | --- |
-| CLI 客户端 | Go | 设备初始化、登录、注册、心跳、上传和下载 |
-| Web UI | HTML / Vue / React 待定 | 展示设备、文件和任务状态 |
-| HTTP API | Go HTTP 服务 | 用户、设备、文件和上传任务接口 |
-| WebSocket | Go WebSocket 库 | 设备心跳和在线状态维护 |
-| 数据库 | SQLite | 保存用户、设备、文件、任务和分片元数据 |
-| 文件存储 | 本地磁盘 | 保存临时分片和合并后的文件 |
+| 服务端 | Go 单体服务 | 用户、设备、文件、上传任务、Web UI |
+| CLI 客户端 | Go | 认证、设备注册、上传下载、任务恢复 |
+| Web UI | 原生 HTML / CSS / JS | 登录、设备、文件、任务状态页 |
+| 数据库 | SQLite | 用户、设备、文件、任务和分片元数据 |
+| 文件存储 | 本地磁盘 | 临时分片和合并后的文件 |
 
-## 计划目录结构
+## 目录结构
 
-项目实现后，推荐按下面结构组织：
+- `server/`：服务端代码、迁移脚本和内置静态资源
+- `client/`：CLI 客户端代码
+- `docs/`：API 文档和开发计划
+- `deploy/`：本地与 Docker 配置模板
+- `Dockerfile`：服务端镜像构建文件
+- `docker-compose.yml`：容器部署模板
 
-```text
-linknest/
-  server/
-    cmd/
-      linknest-server/
-        main.go
-    internal/
-      auth/
-      config/
-      database/
-      device/
-      file/
-      storage/
-      task/
-      websocket/
-      middleware/
-    migrations/
-    web/
-      static/
-      templates/
-  client/
-    cmd/
-      linknest/
-        main.go
-    internal/
-      auth/
-      config/
-      device/
-      transfer/
-      websocket/
-  docs/
-    api.md
-    dev-plan.md
-  deploy/
-    config.example.yaml
+每一层目录都带有 `README.md`，用于说明目录职责、文件结构和文件用途。
+
+## 快速运行
+
+1. 设置环境变量：
+
+```bash
+export LINKNEST_JWT_SECRET='replace-with-local-secret'
 ```
 
-## 核心模块
+2. 启动服务端：
 
-### 用户认证
+```bash
+go run ./server/cmd/linknest-server --config ./deploy/config.example.yaml
+```
 
-- 用户注册、登录和获取当前用户信息。
-- 密码使用 hash 保存。
-- 受保护接口统一使用 `Authorization: Bearer <token>`。
+3. 初始化账号和设备：
 
-### 设备管理
+```bash
+go run ./client/cmd/linknest auth register --username demo --email demo@example.com --password password
+go run ./client/cmd/linknest auth login --username demo --password password
+go run ./client/cmd/linknest device init --name demo-pc --type linux
+go run ./client/cmd/linknest device register
+go run ./client/cmd/linknest device heartbeat
+```
 
-- 生成并注册稳定 Device ID。
-- 维护设备与用户的绑定关系。
-- 保存设备名称、类型、客户端版本、局域网 IP、在线状态和最近心跳时间。
+4. 上传和下载文件：
 
-### 在线状态
+```bash
+go run ./client/cmd/linknest file upload ./demo.zip
+go run ./client/cmd/linknest file list
+go run ./client/cmd/linknest file download <file_id> --output ./downloaded-demo.zip
+go run ./client/cmd/linknest task list
+go run ./client/cmd/linknest task resume <upload_id>
+```
 
-- 客户端通过 WebSocket 发送心跳。
-- 服务端根据 `last_seen_at` 判断设备在线或离线。
-- 设备 IP 变化不影响 Device ID。
+## Web UI
 
-### 文件资源
+服务启动后可直接访问：
 
-- 初始化上传任务。
-- 保存文件名、大小、hash、上传来源设备和存储状态。
-- 支持文件列表、文件详情、删除记录和下载入口。
+- `/login`
+- `/devices`
+- `/files`
+- `/tasks`
 
-### 分片上传
+## Docker 部署
 
-- 客户端按固定 chunk size 切分文件。
-- 服务端支持查询缺失分片。
-- 上传完成后合并文件并校验整体 hash。
-- 上传中断后只补传缺失分片。
+### 直接构建并运行
 
-### 任务状态
+```bash
+docker build -t linknest-server:latest .
+docker run -d \
+  --name linknest-server \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -e LINKNEST_JWT_SECRET='replace-with-server-secret' \
+  -v linknest-data:/var/lib/linknest \
+  linknest-server:latest
+```
 
-- 记录上传任务的创建、运行、失败、完成和恢复状态。
-- 客户端重启后可以根据任务状态继续上传。
+### 使用 Compose
 
-## 开发阶段
+```bash
+export LINKNEST_JWT_SECRET='replace-with-server-secret'
+docker compose up -d --build
+```
 
-V1 建议按以下顺序推进：
+## 默认路径
 
-1. 初始化 Go 服务端工程、配置加载、SQLite、迁移和健康检查。
-2. 实现用户注册、登录、当前用户接口和 JWT 中间件。
-3. 实现设备注册、设备列表、WebSocket 心跳和离线判断。
-4. 实现文件元数据、上传初始化、文件列表和下载。
-5. 实现分片上传、缺失分片查询、完成合并和断点续传。
-6. 实现基础 Web UI，并补充 API 文档和本地部署说明。
-
-## V1 验收标准
-
-V1 完成时至少应满足：
-
-- 可以注册和登录用户。
-- CLI 可以生成稳定 Device ID。
-- CLI 可以注册设备并持续发送 WebSocket 心跳。
-- 服务端可以正确显示设备 online / offline。
-- 同一账号可以绑定多台设备。
-- 设备 A 可以上传文件。
-- 设备 B 可以查看并下载设备 A 上传的文件。
-- 下载文件 hash 与源文件一致。
-- 大文件可以按分片上传。
-- 上传中断后可以继续上传缺失分片。
-- 不同用户之间不能互相查看设备或文件。
-- README 和文档能让新开发者完成本地启动。
+- 本地数据库：`./data/linknest.db`
+- 本地文件存储：`./data/storage`
+- 本地分片目录：`./data/chunks`
+- Docker 数据库：`/var/lib/linknest/linknest.db`
+- Docker 文件存储：`/var/lib/linknest/storage`
+- Docker 分片目录：`/var/lib/linknest/chunks`
 
 ## 协作约定
 
-- `main` 分支保持可用状态。
-- 新功能使用 `feature/*` 分支开发。
-- 修复问题使用 `fix/*` 分支开发。
-- 合并前通过 Pull Request 进行 review。
-- 不提交密钥、token、`.env`、私钥或本地数据库文件。
-- 涉及行为变化时同步更新 README、API 文档或开发计划。
+- `main` 分支保持可用状态
+- 功能改动通过 Pull Request 合并
+- 不提交密钥、token、`.env`、私钥或本地数据库文件
+- 涉及行为变化时同步更新 README、API 文档或开发计划
 
-## 运行方式
-
-项目尚未初始化，暂无可运行代码。
-
-后续完成基础工程后，本节会补充服务端、客户端和本地配置的启动方式。
+更多细节见各级目录下的 `README.md` 与 `docs/` 文档。

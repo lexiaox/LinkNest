@@ -1,0 +1,21 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+auth:
+  jwt_secret: "${LINKNEST_JWT_SECRET}"
+  token_ttl_hours: 168
+
+database:
+  driver: "sqlite"
+  dsn: "./data/linknest.db"
+
+storage:
+  type: "local"
+  root_dir: "./data/storage"
+  chunk_dir: "./data/chunks"
+
+transfer:
+  chunk_size: 4194304
+  heartbeat_interval_seconds: 5
+  offline_timeout_seconds: 15

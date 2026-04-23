@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  linknest-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: linknest-server:latest
+    container_name: linknest-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      LINKNEST_JWT_SECRET: "${LINKNEST_JWT_SECRET:?set LINKNEST_JWT_SECRET before starting}"
+    volumes:
+      - linknest-data:/var/lib/linknest
+
+volumes:
+  linknest-data:

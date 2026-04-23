@@ -7,7 +7,21 @@
 **/tmp/
 **/coverage/
 
+# runtime data and local databases
+/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# archives and local packaging artifacts
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
 # environment files
+.env
+.env.*
 **/.env
 **/.env.*
 !**/.env.example
