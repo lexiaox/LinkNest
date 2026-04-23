@@ -122,6 +122,7 @@ func runSetup(root string, args []string) error {
 		return err
 	}
 
+	printAuthNotice(result)
 	fmt.Printf("setup complete user=%s device_id=%s device_name=%s device_type=%s\n", result.User.Username, profile.DeviceID, profile.DeviceName, profile.DeviceType)
 	fmt.Println("run `linknest online` to keep this device marked online")
 	return nil
@@ -170,6 +171,7 @@ func runAuth(root string, args []string) error {
 			return err
 		}
 
+		printAuthNotice(result)
 		fmt.Printf("registered user=%s token_saved=true\n", result.User.Username)
 		return nil
 	case "login":
@@ -193,11 +195,19 @@ func runAuth(root string, args []string) error {
 			return err
 		}
 
+		printAuthNotice(result)
 		fmt.Printf("logged in user=%s token_saved=true\n", result.User.Username)
 		return nil
 	default:
 		return errors.New("unsupported auth subcommand")
 	}
+}
+
+func printAuthNotice(result auth.AuthResult) {
+	if strings.TrimSpace(result.Notice) == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "notice: %s\n", result.Notice)
 }
 
 func registerUser(serverURL string, input auth.RegisterInput) (auth.AuthResult, error) {

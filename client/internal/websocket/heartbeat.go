@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -21,7 +22,13 @@ func RunHeartbeat(serverURL string, token string, profile device.Profile, interv
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+token)
 
-	conn, _, err := gws.DefaultDialer.Dial(wsURL, header)
+	dialer := &gws.Dialer{
+		Proxy:            nil,
+		HandshakeTimeout: 10 * time.Second,
+		NetDialContext:   (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+	}
+
+	conn, _, err := dialer.Dial(wsURL, header)
 	if err != nil {
 		return err
 	}

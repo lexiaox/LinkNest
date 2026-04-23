@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"linknest/client/internal/httpx"
 )
 
 type Client struct {
@@ -27,8 +29,9 @@ type LoginInput struct {
 }
 
 type AuthResult struct {
-	Token string `json:"token"`
-	User  User   `json:"user"`
+	Token  string `json:"token"`
+	User   User   `json:"user"`
+	Notice string `json:"-"`
 }
 
 type User struct {
@@ -47,33 +50,49 @@ type errorBody struct {
 func NewClient(baseURL string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
-		HTTP: &http.Client{
-			Timeout: 20 * time.Second,
-		},
+		HTTP:    httpx.NewClient(20 * time.Second),
 	}
 }
 
 func (c *Client) Register(input RegisterInput) (AuthResult, error) {
-	return c.postJSON("/api/auth/register", input)
+	result, err := c.postJSON("/api/auth/register", input, 1)
+	if err == nil {
+		return result, nil
+	}
+	if !httpx.IsRetryable(err) {
+		return AuthResult{}, err
+	}
+
+	loginResult, loginErr := c.Login(LoginInput{
+		Username: input.Username,
+		Password: input.Password,
+	})
+	if loginErr == nil {
+		loginResult.Notice = "register request was interrupted after reaching the server; the account is already available and this login was recovered automatically"
+		return loginResult, nil
+	}
+
+	return AuthResult{}, err
 }
 
 func (c *Client) Login(input LoginInput) (AuthResult, error) {
-	return c.postJSON("/api/auth/login", input)
+	return c.postJSON("/api/auth/login", input, 2)
 }
 
-func (c *Client) postJSON(path string, payload interface{}) (AuthResult, error) {
+func (c *Client) postJSON(path string, payload interface{}, attempts int) (AuthResult, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return AuthResult{}, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, c.BaseURL+path, bytes.NewReader(raw))
-	if err != nil {
-		return AuthResult{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTP.Do(req)
+	resp, err := httpx.Do(c.HTTP, attempts, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPost, c.BaseURL+path, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return AuthResult{}, err
 	}

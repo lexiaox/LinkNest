@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"linknest/client/internal/httpx"
+
 	"github.com/google/uuid"
 )
 
@@ -142,14 +144,15 @@ func Register(baseURL string, token string, profile Profile) error {
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/api/devices/register", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.Do(httpx.NewClient(20*time.Second), 2, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/api/devices/register", bytes.NewReader(payload))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -159,13 +162,14 @@ func Register(baseURL string, token string, profile Profile) error {
 }
 
 func List(baseURL string, token string) ([]RemoteDevice, error) {
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/devices", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.Do(httpx.NewClient(20*time.Second), 2, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/devices", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req, nil
+	})
 	if err != nil {
 		return nil, err
 	}

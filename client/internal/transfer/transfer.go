@@ -18,6 +18,7 @@ import (
 	"time"
 
 	clientconfig "linknest/client/internal/config"
+	"linknest/client/internal/httpx"
 )
 
 type RemoteFile struct {
@@ -99,13 +100,14 @@ type errorBody struct {
 }
 
 func ListFiles(baseURL string, token string) ([]RemoteFile, error) {
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/files", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.Do(httpx.NewClient(30*time.Second), 2, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/files", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req, nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -127,13 +129,14 @@ func ListFiles(baseURL string, token string) ([]RemoteFile, error) {
 }
 
 func ListTasks(baseURL string, token string) ([]RemoteTask, error) {
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/tasks", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.Do(httpx.NewClient(30*time.Second), 2, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/tasks", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req, nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -268,13 +271,14 @@ func Download(root string, cfg clientconfig.ClientConfig, fileID string, output 
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(cfg.ServerURL, "/")+"/api/files/"+fileID+"/download", nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+cfg.Token)
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.Do(httpx.NewClient(30*time.Second), 2, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, strings.TrimRight(cfg.ServerURL, "/")+"/api/files/"+fileID+"/download", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+cfg.Token)
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -443,13 +447,14 @@ func missingChunks(baseURL string, token string, uploadID string) (MissingChunks
 }
 
 func completeUpload(baseURL string, token string, uploadID string) (CompleteUploadResponse, error) {
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/api/uploads/"+uploadID+"/complete", nil)
-	if err != nil {
-		return CompleteUploadResponse{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.Do(httpx.NewClient(30*time.Second), 2, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/api/uploads/"+uploadID+"/complete", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req, nil
+	})
 	if err != nil {
 		return CompleteUploadResponse{}, err
 	}
@@ -474,15 +479,16 @@ func completeUpload(baseURL string, token string, uploadID string) (CompleteUplo
 }
 
 func uploadChunk(baseURL string, token string, uploadID string, chunkIndex int, chunkHash string, body []byte) error {
-	req, err := http.NewRequest(http.MethodPut, strings.TrimRight(baseURL, "/")+"/api/uploads/"+uploadID+"/chunks/"+strconv.Itoa(chunkIndex), bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/octet-stream")
-	req.Header.Set("X-Chunk-Hash", chunkHash)
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.Do(httpx.NewClient(30*time.Second), 2, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPut, strings.TrimRight(baseURL, "/")+"/api/uploads/"+uploadID+"/chunks/"+strconv.Itoa(chunkIndex), bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.Header.Set("X-Chunk-Hash", chunkHash)
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -499,28 +505,33 @@ func uploadChunk(baseURL string, token string, uploadID string, chunkIndex int, 
 }
 
 func doJSON(method string, url string, token string, payload interface{}, out interface{}) error {
-	var bodyReader io.Reader
+	var raw []byte
 	if payload != nil {
-		raw, err := json.Marshal(payload)
+		var err error
+		raw, err = json.Marshal(payload)
 		if err != nil {
 			return err
 		}
-		bodyReader = bytes.NewReader(raw)
 	}
 
-	req, err := http.NewRequest(method, url, bodyReader)
-	if err != nil {
-		return err
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	resp, err := httpx.Do(httpx.NewClient(30*time.Second), 2, func() (*http.Request, error) {
+		var bodyReader io.Reader
+		if raw != nil {
+			bodyReader = bytes.NewReader(raw)
+		}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+		req, err := http.NewRequest(method, url, bodyReader)
+		if err != nil {
+			return nil, err
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
