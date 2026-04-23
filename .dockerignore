@@ -1,0 +1,11 @@
+.git
+.gitignore
+data
+.linknest
+tmp
+*.db
+*.log
+client
+docs
+**/.DS_Store
+**/Thumbs.db
