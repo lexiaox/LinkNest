@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"linknest/server/internal/config"
+	"linknest/server/internal/storage"
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"golang.org/x/crypto/bcrypt"
@@ -24,6 +27,7 @@ type Service struct {
 	db        *sql.DB
 	jwtSecret []byte
 	tokenTTL  time.Duration
+	storage   storage.Local
 }
 
 type User struct {
@@ -50,16 +54,26 @@ type AuthResult struct {
 	User  User   `json:"user"`
 }
 
+type DeleteAccountInput struct {
+	Password string `json:"password"`
+}
+
+type DeleteAccountResult struct {
+	Deleted bool `json:"deleted"`
+	User    User `json:"user"`
+}
+
 type Claims struct {
 	UserID int64 `json:"user_id"`
 	jwt.StandardClaims
 }
 
-func NewService(db *sql.DB, cfg config.AuthConfig) *Service {
+func NewService(db *sql.DB, cfg config.AuthConfig, localStorage storage.Local) *Service {
 	return &Service{
 		db:        db,
 		jwtSecret: []byte(cfg.JWTSecret),
 		tokenTTL:  cfg.TokenTTL(),
+		storage:   localStorage,
 	}
 }
 
@@ -165,6 +179,70 @@ WHERE id = ?
 	return user, nil
 }
 
+func (s *Service) DeleteAccount(ctx context.Context, userID int64, input DeleteAccountInput) (DeleteAccountResult, error) {
+	password := strings.TrimSpace(input.Password)
+	if password == "" {
+		return DeleteAccountResult{}, ErrBadCredentials
+	}
+
+	var (
+		user         User
+		passwordHash string
+	)
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, username, COALESCE(email, ''), password_hash, created_at, updated_at
+FROM users
+WHERE id = ?
+`, userID).Scan(&user.ID, &user.Username, &user.Email, &passwordHash, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return DeleteAccountResult{}, ErrInvalidToken
+		}
+		return DeleteAccountResult{}, fmt.Errorf("load delete account user: %w", err)
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
+		return DeleteAccountResult{}, ErrBadCredentials
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return DeleteAccountResult{}, fmt.Errorf("begin delete account tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM file_chunks
+WHERE upload_id IN (SELECT upload_id FROM upload_tasks WHERE user_id = ?)
+   OR file_id IN (SELECT file_id FROM files WHERE user_id = ?)
+`, userID, userID); err != nil {
+		return DeleteAccountResult{}, fmt.Errorf("delete file chunks: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM users
+WHERE id = ?
+`, userID); err != nil {
+		return DeleteAccountResult{}, fmt.Errorf("delete user: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return DeleteAccountResult{}, fmt.Errorf("commit delete account tx: %w", err)
+	}
+
+	if err := os.RemoveAll(s.userStorageDir(userID)); err != nil {
+		return DeleteAccountResult{}, fmt.Errorf("remove user storage dir: %w", err)
+	}
+	if err := os.RemoveAll(s.userChunkDir(userID)); err != nil {
+		return DeleteAccountResult{}, fmt.Errorf("remove user chunk dir: %w", err)
+	}
+
+	return DeleteAccountResult{
+		Deleted: true,
+		User:    user,
+	}, nil
+}
+
 func (s *Service) ParseToken(token string) (User, error) {
 	claims := &Claims{}
 	parsed, err := jwt.ParseWithClaims(token, claims, func(parsedToken *jwt.Token) (interface{}, error) {
@@ -217,4 +295,12 @@ func (s *Service) issueToken(user User) (string, error) {
 func isUniqueViolation(err error) bool {
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "unique") || strings.Contains(message, "constraint")
+}
+
+func (s *Service) userStorageDir(userID int64) string {
+	return filepath.Join(s.storage.RootDir, fmt.Sprintf("%d", userID))
+}
+
+func (s *Service) userChunkDir(userID int64) string {
+	return filepath.Join(s.storage.ChunkDir, fmt.Sprintf("%d", userID))
 }

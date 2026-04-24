@@ -198,6 +198,33 @@ func runAuth(root string, args []string) error {
 		printAuthNotice(result)
 		fmt.Printf("logged in user=%s token_saved=true\n", result.User.Username)
 		return nil
+	case "delete":
+		fs := flag.NewFlagSet("auth delete", flag.ContinueOnError)
+		password := fs.String("password", "", "current password")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*password) == "" {
+			return errors.New("password is required")
+		}
+		if strings.TrimSpace(cfg.Token) == "" {
+			return errors.New("token is empty, run auth login first")
+		}
+
+		result, err := client.DeleteAccount(cfg.Token, auth.DeleteAccountInput{
+			Password: *password,
+		})
+		if err != nil {
+			return err
+		}
+
+		cfg.Token = ""
+		if err := clientconfig.Save(root, cfg); err != nil {
+			return err
+		}
+
+		fmt.Printf("account deleted user=%s token_cleared=true\n", result.User.Username)
+		return nil
 	default:
 		return errors.New("unsupported auth subcommand")
 	}
@@ -394,6 +421,7 @@ func usage() error {
 	fmt.Println("  linknest online")
 	fmt.Println("  linknest auth register --username demo --email demo@example.com --password password")
 	fmt.Println("  linknest auth login --username demo --password password")
+	fmt.Println("  linknest auth delete --password password")
 	fmt.Println("  linknest device init --name demo-pc --type linux")
 	fmt.Println("  linknest device register")
 	fmt.Println("  linknest device list")

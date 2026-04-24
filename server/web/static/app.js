@@ -1,6 +1,7 @@
 const TOKEN_KEY = "linknest.token";
 const USER_KEY = "linknest.user";
 const UPLOAD_CACHE_KEY = "linknest.webUploadTasks";
+const FLASH_KEY = "linknest.flash";
 
 function getToken() {
   return window.localStorage.getItem(TOKEN_KEY) || "";
@@ -13,6 +14,20 @@ function setToken(token) {
 function clearSession() {
   window.localStorage.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(USER_KEY);
+}
+
+function setFlashMessage(message) {
+  if (!message) {
+    window.sessionStorage.removeItem(FLASH_KEY);
+    return;
+  }
+  window.sessionStorage.setItem(FLASH_KEY, message);
+}
+
+function consumeFlashMessage() {
+  const message = window.sessionStorage.getItem(FLASH_KEY) || "";
+  window.sessionStorage.removeItem(FLASH_KEY);
+  return message;
 }
 
 function setUser(user) {
@@ -149,6 +164,7 @@ function renderShell(activeKey, pageTitle, pageCopy) {
         <div class="topbar-actions">
           <span class="user-chip">${userLabel}</span>
           <a class="button ghost" href="/">首页</a>
+          <button id="delete-account-button" class="ghost" type="button">注销账号</button>
           <button id="logout-button" class="ghost" type="button">退出登录</button>
         </div>
       </header>
@@ -171,6 +187,36 @@ function renderShell(activeKey, pageTitle, pageCopy) {
   document.getElementById("logout-button").addEventListener("click", () => {
     clearSession();
     window.location.href = "/login";
+  });
+
+  document.getElementById("delete-account-button").addEventListener("click", async () => {
+    const password = window.prompt("输入当前密码以确认注销账号。");
+    if (password == null) {
+      return;
+    }
+    if (!password.trim()) {
+      setMessage("需要输入当前密码。", "error");
+      return;
+    }
+
+    const confirmed = window.confirm("确认注销当前账号吗？这会删除该账号下的设备、文件和上传记录。");
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setMessage("正在注销账号并清理服务器数据...", "info");
+      await apiFetch("/api/auth/delete-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      clearSession();
+      setFlashMessage("账号已注销，服务器中的相关数据已清理。");
+      window.location.href = "/login";
+    } catch (error) {
+      setMessage(error.message, "error");
+    }
   });
 }
 
@@ -358,6 +404,7 @@ async function setupLoginPage() {
   const emailField = document.getElementById("email-field");
   const submitButton = document.getElementById("auth-submit");
   const messageBar = document.getElementById("login-message");
+  const flashMessage = consumeFlashMessage();
 
   function switchMode(mode) {
     state.mode = mode;
@@ -372,6 +419,11 @@ async function setupLoginPage() {
 
   document.getElementById("tab-login").addEventListener("click", () => switchMode("login"));
   document.getElementById("tab-register").addEventListener("click", () => switchMode("register"));
+
+  if (flashMessage) {
+    messageBar.className = "message-bar visible success";
+    messageBar.textContent = flashMessage;
+  }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();

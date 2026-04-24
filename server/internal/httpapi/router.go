@@ -45,6 +45,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux.HandleFunc("/api/auth/register", method(http.MethodPost, handleRegister(deps.Auth)))
 	mux.HandleFunc("/api/auth/login", method(http.MethodPost, handleLogin(deps.Auth)))
 	mux.Handle("/api/auth/me", middleware.RequireAuth(deps.Auth, methodHandler(http.MethodGet, handleMe())))
+	mux.Handle("/api/auth/delete-account", middleware.RequireAuth(deps.Auth, methodHandler(http.MethodPost, handleDeleteAccount(deps.Auth))))
 
 	mux.Handle("/api/devices/register", middleware.RequireAuth(deps.Auth, methodHandler(http.MethodPost, handleDeviceRegister(deps.Device))))
 	mux.Handle("/api/devices", middleware.RequireAuth(deps.Auth, methodHandler(http.MethodGet, handleDeviceList(deps.Device))))
@@ -166,6 +167,37 @@ func handleMe() http.HandlerFunc {
 		response.JSON(w, http.StatusOK, map[string]interface{}{
 			"user": user,
 		})
+	}
+}
+
+func handleDeleteAccount(service *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, ok := middleware.CurrentUser(r.Context())
+		if !ok {
+			response.Error(w, http.StatusUnauthorized, "AUTH_INVALID_TOKEN", "invalid token")
+			return
+		}
+
+		var input auth.DeleteAccountInput
+		if err := decodeJSON(r, &input); err != nil {
+			response.Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+
+		result, err := service.DeleteAccount(r.Context(), user.ID, input)
+		if err != nil {
+			switch {
+			case errors.Is(err, auth.ErrBadCredentials):
+				response.Error(w, http.StatusUnauthorized, "AUTH_BAD_CREDENTIALS", "invalid username or password")
+			case errors.Is(err, auth.ErrInvalidToken):
+				response.Error(w, http.StatusUnauthorized, "AUTH_INVALID_TOKEN", "invalid token")
+			default:
+				response.Error(w, http.StatusInternalServerError, "AUTH_DELETE_ACCOUNT_FAILED", err.Error())
+			}
+			return
+		}
+
+		response.JSON(w, http.StatusOK, result)
 	}
 }
 

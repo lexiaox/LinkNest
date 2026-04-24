@@ -28,6 +28,10 @@ type LoginInput struct {
 	Password string `json:"password"`
 }
 
+type DeleteAccountInput struct {
+	Password string `json:"password"`
+}
+
 type AuthResult struct {
 	Token  string `json:"token"`
 	User   User   `json:"user"`
@@ -38,6 +42,11 @@ type User struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
 	Email    string `json:"email"`
+}
+
+type DeleteAccountResult struct {
+	Deleted bool `json:"deleted"`
+	User    User `json:"user"`
 }
 
 type errorBody struct {
@@ -77,6 +86,45 @@ func (c *Client) Register(input RegisterInput) (AuthResult, error) {
 
 func (c *Client) Login(input LoginInput) (AuthResult, error) {
 	return c.postJSON("/api/auth/login", input, 2)
+}
+
+func (c *Client) DeleteAccount(token string, input DeleteAccountInput) (DeleteAccountResult, error) {
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return DeleteAccountResult{}, err
+	}
+
+	resp, err := httpx.Do(c.HTTP, 1, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/api/auth/delete-account", bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
+	if err != nil {
+		return DeleteAccountResult{}, err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return DeleteAccountResult{}, err
+	}
+	if resp.StatusCode >= 400 {
+		var remoteErr errorBody
+		if err := json.Unmarshal(body, &remoteErr); err == nil && remoteErr.Error.Message != "" {
+			return DeleteAccountResult{}, fmt.Errorf("%s: %s", remoteErr.Error.Code, remoteErr.Error.Message)
+		}
+		return DeleteAccountResult{}, fmt.Errorf("request failed: %s", resp.Status)
+	}
+
+	var result DeleteAccountResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return DeleteAccountResult{}, err
+	}
+	return result, nil
 }
 
 func (c *Client) postJSON(path string, payload interface{}, attempts int) (AuthResult, error) {
