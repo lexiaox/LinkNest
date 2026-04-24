@@ -1,14 +1,16 @@
 # LinkNest
 
-LinkNest 是一个可运行的多端文件传输原型，提供服务端、Web UI、CLI 和 Docker 部署方式。你可以把它部署到自己的服务器上，然后通过浏览器或 CLI 登录同一个账号、绑定设备、上传文件、下载文件和查看任务状态。
+LinkNest 是一个可运行的多端文件传输原型，提供服务端、Web UI、CLI、Windows 桌面端和 Docker 部署方式。你可以把它部署到自己的服务器上，然后通过浏览器、CLI 或 Windows GUI 登录同一个账号、绑定设备、上传文件、下载文件、删除文件、查看任务状态，以及在不再需要时注销账号并清理自己的数据。
 
 ## 我能用它做什么
 
 - 在自己的服务器上部署一个可访问的文件传输服务
 - 用浏览器登录账号，查看设备、文件和任务
 - 用 CLI 把当前电脑绑定成一个设备并保持在线
+- 在 Windows 桌面端里完成登录、绑定设备、文件管理和上传任务查看
 - 上传大文件、断点续传、补传缺失分片
-- 在其他设备上查看文件并下载
+- 在其他设备上查看文件、下载文件和删除文件
+- 注销测试账号或不再使用的账号，清理对应的设备、文件和上传记录
 
 ## 作为部署者怎么启动服务
 
@@ -78,8 +80,9 @@ http://<server>:8080/login
 3. 登录后按页面使用：
 
 - `Devices`：查看当前账号下的设备和在线状态
-- `Files`：上传文件、查看文件列表、下载文件
+- `Files`：上传文件、查看文件列表、下载文件、删除文件
 - `Tasks`：查看上传任务、续传状态和进度
+- 页面右上角的 `注销账号`：输入当前密码后删除该账号及其设备、文件和上传记录
 
 ### 手机怎么用
 
@@ -87,6 +90,31 @@ http://<server>:8080/login
 - 当前是 Web 使用方式，不是原生 App
 - 手机可以登录、查看设备、查看文件、上传下载
 - 当前“正式设备绑定”主要由 CLI 客户端完成，手机浏览器更适合作为 Web 用户入口
+
+## 作为 Windows 用户怎么使用桌面端
+
+### 直接使用 release 里的可执行文件
+
+1. 下载 GitHub Release 里的 Windows 压缩包。
+2. 解压后运行 `linknest-desktop.exe`。
+3. 在账号页先保存服务器地址，再登录或注册。
+4. 在设备页绑定当前设备，并按需启动在线心跳。
+5. 在文件页上传、下载和删除文件，在上传任务页查看任务状态。
+
+### 自己编译 Windows 桌面端
+
+需要：
+
+- Go
+- `CGO_ENABLED=1`
+- 可用的 Windows C 编译器，例如 MSYS2 UCRT64 的 `gcc` / `g++`
+
+编译命令：
+
+```bash
+mkdir -p ./bin
+go build -o ./bin/linknest-desktop.exe ./client/desktop/cmd/linknest-desktop
+```
 
 ## 作为 CLI 用户怎么绑定设备和保持在线
 
@@ -123,7 +151,7 @@ go run ./client/cmd/linknest online
 
 这会持续发送设备心跳，让当前设备在设备页里显示为在线。
 
-## 怎么上传、下载、查看任务
+## 怎么上传、下载、删除文件、查看任务和注销账号
 
 ### 通过 Web UI
 
@@ -131,6 +159,8 @@ go run ./client/cmd/linknest online
 2. 选择文件后上传
 3. 在任务页：`http://<server>:8080/tasks` 查看进度
 4. 在文件页中下载目标文件
+5. 在文件页中点击目标文件右侧的删除按钮，可以从服务器移除该文件
+6. 如果不再需要当前账号，可以点击页面右上角的 `注销账号`，输入当前密码后清理该账号的数据
 
 ### 通过 CLI
 
@@ -152,6 +182,12 @@ go run ./client/cmd/linknest file list
 go run ./client/cmd/linknest file download <file_id> --output ./downloaded-demo.zip
 ```
 
+删除文件：
+
+```bash
+go run ./client/cmd/linknest file delete <file_id>
+```
+
 查看任务列表：
 
 ```bash
@@ -163,6 +199,19 @@ go run ./client/cmd/linknest task list
 ```bash
 go run ./client/cmd/linknest task resume <upload_id>
 ```
+
+注销当前账号：
+
+```bash
+go run ./client/cmd/linknest auth delete --password <当前密码>
+```
+
+执行后会：
+
+- 删除当前账号下的设备记录
+- 删除当前账号下的文件和上传任务
+- 清理服务器上的用户文件存储目录和分片目录
+- 清空本地 CLI 保存的登录 token
 
 ## 常见访问入口
 
@@ -184,6 +233,7 @@ go run ./client/cmd/linknest task resume <upload_id>
 ## 补充文档入口
 
 - `client/`：CLI 客户端代码和模块说明
+- `client/desktop/`：Windows 桌面端代码和构建说明
 - `server/`：服务端代码、迁移脚本和 Web 资源
 - `deploy/`：本地和 Docker 配置模板
 - `docs/api.md`：API 说明

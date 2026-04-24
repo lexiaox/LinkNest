@@ -4,4 +4,4 @@
 
 目录结构：
 
-- `linknest-desktop/`：Windows GUI 主入口。
+- `linknest-desktop/`：Windows GUI 主入口，编译后生成 `linknest-desktop.exe`。
