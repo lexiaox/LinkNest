@@ -58,6 +58,10 @@ function removeUploadCache(uploadId) {
   saveUploadCache(getUploadCache().filter((item) => item.uploadId !== uploadId));
 }
 
+function removeUploadCacheByFileId(fileId) {
+  saveUploadCache(getUploadCache().filter((item) => item.fileId !== fileId));
+}
+
 function getUploadTask(uploadId) {
   return getUploadCache().find((item) => item.uploadId === uploadId) || null;
 }
@@ -653,6 +657,7 @@ async function setupFilesPage() {
       ]);
       document.getElementById("files-table").innerHTML = renderFilesTable(items);
       bindDownloadButtons();
+      bindDeleteButtons();
       setAutoRefreshStatus("files-auto-status", refreshIntervalMs, new Date());
       if (message) {
         setMessage(`文件列表已刷新，当前共有 ${items.length} 个文件。`, "success");
@@ -823,6 +828,9 @@ function renderFilesTable(items) {
                   }>
                     下载
                   </button>
+                  <button class="ghost delete-button" type="button" data-file-id="${escapeHTML(item.file_id)}" data-file-name="${escapeHTML(item.file_name)}">
+                    删除
+                  </button>
                 </td>
               </tr>
             `
@@ -853,6 +861,37 @@ function bindDownloadButtons() {
         setMessage(`文件 ${fileName} 已开始下载。`, "success");
       } catch (error) {
         setMessage(error.message, "error");
+      }
+    });
+  });
+}
+
+function bindDeleteButtons() {
+  document.querySelectorAll(".delete-button").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const fileId = button.getAttribute("data-file-id");
+      const fileName = button.getAttribute("data-file-name") || fileId || "unknown";
+      if (!fileId) {
+        setMessage("缺少 file_id，无法删除。", "error");
+        return;
+      }
+
+      const confirmed = window.confirm(`确认删除文件“${fileName}”吗？删除后将从服务器移除，无法继续下载。`);
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        button.disabled = true;
+        setMessage(`正在删除 ${fileName}...`, "info");
+        await apiFetch(`/api/files/${fileId}`, { method: "DELETE" });
+        removeUploadCacheByFileId(fileId);
+        setMessage(`文件 ${fileName} 已删除。`, "success");
+        await refreshFiles();
+      } catch (error) {
+        setMessage(error.message, "error");
+      } finally {
+        button.disabled = false;
       }
     });
   });

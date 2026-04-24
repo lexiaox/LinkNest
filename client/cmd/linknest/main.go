@@ -341,6 +341,11 @@ func runFile(root string, args []string) error {
 			output = args[3]
 		}
 		return transfer.Download(root, cfg, args[1], output)
+	case "delete":
+		if len(args) < 2 {
+			return errors.New("file delete requires a file_id")
+		}
+		return transfer.DeleteFile(cfg.ServerURL, cfg.Token, args[1])
 	default:
 		return errors.New("unsupported file subcommand")
 	}
@@ -394,6 +399,9 @@ func usage() error {
 	fmt.Println("  linknest device list")
 	fmt.Println("  linknest device heartbeat")
 	fmt.Println("  linknest file list")
+	fmt.Println("  linknest file upload ./demo.zip")
+	fmt.Println("  linknest file download <file_id> --output ./downloaded-demo.zip")
+	fmt.Println("  linknest file delete <file_id>")
 	fmt.Println("  linknest task list")
 	return nil
 }

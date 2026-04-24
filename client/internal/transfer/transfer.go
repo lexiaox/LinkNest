@@ -92,6 +92,12 @@ type taskListResponse struct {
 	Items []RemoteTask `json:"items"`
 }
 
+type deleteFileResponse struct {
+	FileID  string `json:"file_id"`
+	Deleted bool   `json:"deleted"`
+	Status  string `json:"status"`
+}
+
 type errorBody struct {
 	Error struct {
 		Code    string `json:"code"`
@@ -324,6 +330,44 @@ func Download(root string, cfg clientconfig.ClientConfig, fileID string, output 
 	}
 
 	fmt.Printf("download completed file_id=%s output=%s\n", fileID, absOutput)
+	return nil
+}
+
+func DeleteFile(baseURL string, token string, fileID string) error {
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return errors.New("file_id is required")
+	}
+
+	resp, err := httpx.Do(httpx.NewClient(30*time.Second), 2, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodDelete, strings.TrimRight(baseURL, "/")+"/api/files/"+fileID, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req, nil
+	})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 400 {
+		return decodeError(body, resp.Status)
+	}
+
+	var result deleteFileResponse
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &result); err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("file deleted file_id=%s status=%s\n", fileID, strings.TrimSpace(result.Status))
 	return nil
 }
 
