@@ -5,3 +5,8 @@
 目录结构：
 
 - `main_windows.go`：Windows 桌面端入口。
+
+运行结果：
+
+- 本地构建后会得到 `linknest-desktop.exe`
+- GitHub Release 的 Windows 压缩包也会提供这个可执行文件
