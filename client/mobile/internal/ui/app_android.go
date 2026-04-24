@@ -268,20 +268,29 @@ func (m *MobileApp) buildDeviceTab() fyne.CanvasObject {
 
 	bindButton := widget.NewButton("绑定当前设备", func() {
 		var profile device.Profile
+		var devices []device.RemoteDevice
 		m.runAsync("正在绑定当前设备...", func() error {
 			var err error
 			profile, err = m.svc.BindCurrentDevice(m.deviceName.Text, m.deviceType.Text)
+			if err != nil {
+				return err
+			}
+			devices, err = m.svc.ListDevices()
 			return err
 		}, func() {
+			m.applyDevices(devices)
 			m.setStatus(fmt.Sprintf("设备已绑定：%s (%s)", profile.DeviceName, profile.DeviceID))
-			_ = m.refreshDevices(true)
 		})
 	})
 
 	refreshButton := widget.NewButton("刷新设备列表", func() {
+		var devices []device.RemoteDevice
 		m.runAsync("正在刷新设备列表...", func() error {
-			return m.refreshDevices(true)
+			var err error
+			devices, err = m.svc.ListDevices()
+			return err
 		}, func() {
+			m.applyDevices(devices)
 			m.setStatus(fmt.Sprintf("设备列表已刷新，共 %d 台设备。", len(m.devices)))
 		})
 	})
@@ -333,9 +342,13 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 	}
 
 	refreshButton := widget.NewButton("刷新文件列表", func() {
+		var files []transfer.RemoteFile
 		m.runAsync("正在刷新文件列表...", func() error {
-			return m.refreshFiles(true)
+			var err error
+			files, err = m.svc.ListFiles()
+			return err
 		}, func() {
+			m.applyFiles(files)
 			m.setStatus(fmt.Sprintf("文件列表已刷新，共 %d 个文件。", len(m.files)))
 		})
 	})
@@ -356,15 +369,22 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 				return
 			}
 
+			var files []transfer.RemoteFile
+			var tasks []transfer.RemoteTask
 			m.runAsync("正在上传文件...", func() error {
 				if err := m.svc.Upload(tempPath); err != nil {
 					return err
 				}
-				if err := m.refreshFiles(true); err != nil {
+				var err error
+				files, err = m.svc.ListFiles()
+				if err != nil {
 					return err
 				}
-				return m.refreshTasks(true)
+				tasks, err = m.svc.ListTasks()
+				return err
 			}, func() {
+				m.applyFiles(files)
+				m.applyTasks(tasks)
 				m.setStatus(fmt.Sprintf("上传完成：%s", filepath.Base(tempPath)))
 			})
 		}, m.window).Show()
@@ -402,15 +422,22 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 				return
 			}
 
+			var files []transfer.RemoteFile
+			var tasks []transfer.RemoteTask
 			m.runAsync("正在删除文件...", func() error {
 				if err := m.svc.DeleteFile(file.FileID); err != nil {
 					return err
 				}
-				if err := m.refreshFiles(true); err != nil {
+				var err error
+				files, err = m.svc.ListFiles()
+				if err != nil {
 					return err
 				}
-				return m.refreshTasks(true)
+				tasks, err = m.svc.ListTasks()
+				return err
 			}, func() {
+				m.applyFiles(files)
+				m.applyTasks(tasks)
 				m.setStatus(fmt.Sprintf("文件已删除：%s", file.FileName))
 			})
 		}, m.window)
@@ -454,9 +481,13 @@ func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
 	m.selectedTaskProgress.Hide()
 
 	refreshButton := widget.NewButton("刷新任务列表", func() {
+		var tasks []transfer.RemoteTask
 		m.runAsync("正在刷新任务列表...", func() error {
-			return m.refreshTasks(true)
+			var err error
+			tasks, err = m.svc.ListTasks()
+			return err
 		}, func() {
+			m.applyTasks(tasks)
 			m.setStatus(fmt.Sprintf("上传任务列表已刷新，共 %d 条任务。", len(m.tasks)))
 		})
 	})
@@ -468,15 +499,22 @@ func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
 			return
 		}
 
+		var tasks []transfer.RemoteTask
+		var files []transfer.RemoteFile
 		m.runAsync("正在继续上传任务...", func() error {
 			if err := m.svc.ResumeTask(task.UploadID); err != nil {
 				return err
 			}
-			if err := m.refreshTasks(true); err != nil {
+			var err error
+			tasks, err = m.svc.ListTasks()
+			if err != nil {
 				return err
 			}
-			return m.refreshFiles(true)
+			files, err = m.svc.ListFiles()
+			return err
 		}, func() {
+			m.applyTasks(tasks)
+			m.applyFiles(files)
 			m.setStatus(fmt.Sprintf("上传任务已继续：%s", task.UploadID))
 		})
 	})
@@ -569,9 +607,11 @@ func (m *MobileApp) startAutoRefresh() {
 			devices, devErr := m.svc.ListDevices()
 			tasks, taskErr := m.svc.ListTasks()
 			var files []transfer.RemoteFile
+			fetchedFiles := false
 			var fileErr error
 			if cycle%2 == 0 {
 				files, fileErr = m.svc.ListFiles()
+				fetchedFiles = true
 			}
 
 			now := time.Now()
@@ -587,10 +627,8 @@ func (m *MobileApp) startAutoRefresh() {
 					applyListHeight(m.taskList, len(m.tasks), mobileTaskHeight)
 					m.updateSelectedTaskSummary()
 				}
-				if fileErr == nil && files != nil {
-					m.files = files
-					m.fileList.Refresh()
-					applyListHeight(m.fileList, len(m.files), mobileFileHeight)
+				if fileErr == nil && fetchedFiles {
+					m.applyFiles(files)
 				}
 				m.lastRefreshLabel.SetText("最近自动刷新：" + now.Format("2006-01-02 15:04:05"))
 				m.refreshSnapshot()
@@ -654,6 +692,31 @@ func (m *MobileApp) refreshTasks(silent bool) error {
 	m.updateSelectedTaskSummary()
 	m.markRefreshed()
 	return nil
+}
+
+func (m *MobileApp) applyDevices(items []device.RemoteDevice) {
+	m.devices = items
+	m.selectedDevice = -1
+	m.deviceList.Refresh()
+	applyListHeight(m.deviceList, len(m.devices), mobileDeviceHeight)
+	m.markRefreshed()
+}
+
+func (m *MobileApp) applyFiles(items []transfer.RemoteFile) {
+	m.files = items
+	m.selectedFile = -1
+	m.fileList.Refresh()
+	applyListHeight(m.fileList, len(m.files), mobileFileHeight)
+	m.markRefreshed()
+}
+
+func (m *MobileApp) applyTasks(items []transfer.RemoteTask) {
+	m.tasks = items
+	m.selectedTask = -1
+	m.taskList.Refresh()
+	applyListHeight(m.taskList, len(m.tasks), mobileTaskHeight)
+	m.updateSelectedTaskSummary()
+	m.markRefreshed()
 }
 
 func (m *MobileApp) refreshSnapshot() {
