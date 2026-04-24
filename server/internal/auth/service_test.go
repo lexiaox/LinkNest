@@ -61,6 +61,45 @@ func TestDeleteAccountRemovesUserDataAndStorage(t *testing.T) {
 	}
 }
 
+func TestDeleteAccountSucceedsWhenStorageCleanupFails(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "linknest-auth-delete-cleanup-test-")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+
+	db := openAuthTestDB(t, filepath.Join(tempDir, "linknest.db"))
+	defer db.Close()
+
+	userID := seedAuthUser(t, db, "cleanup-user", "cleanup@example.com", "password")
+
+	// Use a file path as storage root/chunk root so removing nested directories
+	// results in cleanup errors, and ensure DeleteAccount still succeeds.
+	badRoot := filepath.Join(tempDir, "not-a-dir")
+	if err := ioutil.WriteFile(badRoot, []byte("x"), 0644); err != nil {
+		t.Fatalf("write bad root file: %v", err)
+	}
+
+	service := NewService(db, config.AuthConfig{
+		JWTSecret:     "test-secret",
+		TokenTTLHours: 24,
+	}, storage.Local{
+		RootDir:  badRoot,
+		ChunkDir: badRoot,
+	})
+
+	result, err := service.DeleteAccount(context.Background(), userID, DeleteAccountInput{
+		Password: "password",
+	})
+	if err != nil {
+		t.Fatalf("delete account with cleanup error: %v", err)
+	}
+	if !result.Deleted || result.User.ID != userID {
+		t.Fatalf("unexpected delete result: %+v", result)
+	}
+
+	assertCount(t, db, "SELECT COUNT(*) FROM users WHERE id = ?", userID, 0)
+}
+
 func openAuthTestDB(t *testing.T, dsn string) *sql.DB {
 	t.Helper()
 

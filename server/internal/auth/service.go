@@ -230,12 +230,10 @@ WHERE id = ?
 		return DeleteAccountResult{}, fmt.Errorf("commit delete account tx: %w", err)
 	}
 
-	if err := os.RemoveAll(s.userStorageDir(userID)); err != nil {
-		return DeleteAccountResult{}, fmt.Errorf("remove user storage dir: %w", err)
-	}
-	if err := os.RemoveAll(s.userChunkDir(userID)); err != nil {
-		return DeleteAccountResult{}, fmt.Errorf("remove user chunk dir: %w", err)
-	}
+	// Best-effort filesystem cleanup: once account data is deleted in DB,
+	// we should still report success even if local storage removal fails.
+	_ = os.RemoveAll(s.userStorageDir(userID))
+	_ = os.RemoveAll(s.userChunkDir(userID))
 
 	return DeleteAccountResult{
 		Deleted: true,
