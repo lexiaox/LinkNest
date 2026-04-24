@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,6 +110,92 @@ func TestUploadLifecycle(t *testing.T) {
 	}
 	if secondInit.Status != "available" {
 		t.Fatalf("expected available status on second init, got %s", secondInit.Status)
+	}
+}
+
+func TestDeleteRemovesFileMetadataAndStorage(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "linknest-file-delete-test-")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	db := openTestDB(t, filepath.Join(tempDir, "linknest.db"))
+	defer db.Close()
+
+	userID := seedUser(t, db)
+	seedDevice(t, db, userID, "device-a")
+
+	service := NewService(db, storage.Local{
+		RootDir:  filepath.Join(tempDir, "storage"),
+		ChunkDir: filepath.Join(tempDir, "chunks"),
+	})
+
+	payload := []byte("delete-me")
+	filePath := filepath.Join(tempDir, "delete.txt")
+	if err := ioutil.WriteFile(filePath, payload, 0644); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+
+	fileHash, err := ComputeSHA256FromFile(filePath)
+	if err != nil {
+		t.Fatalf("compute file hash: %v", err)
+	}
+
+	ctx := context.Background()
+	initResult, err := service.InitUpload(ctx, userID, InitUploadInput{
+		DeviceID:    "device-a",
+		FileName:    "delete.txt",
+		FileSize:    int64(len(payload)),
+		FileHash:    fileHash,
+		ChunkSize:   int64(len(payload)),
+		TotalChunks: 1,
+	})
+	if err != nil {
+		t.Fatalf("init upload: %v", err)
+	}
+
+	chunkHash := sha256Hex(payload)
+	if _, err := service.UploadChunk(ctx, userID, initResult.UploadID, 0, chunkHash, strings.NewReader(string(payload))); err != nil {
+		t.Fatalf("upload chunk: %v", err)
+	}
+
+	if _, err := service.CompleteUpload(ctx, userID, initResult.UploadID); err != nil {
+		t.Fatalf("complete upload: %v", err)
+	}
+
+	record, err := service.OpenDownload(ctx, userID, initResult.FileID)
+	if err != nil {
+		t.Fatalf("open download before delete: %v", err)
+	}
+	if _, err := os.Stat(record.StoragePath); err != nil {
+		t.Fatalf("stat storage before delete: %v", err)
+	}
+
+	if err := service.Delete(ctx, userID, initResult.FileID); err != nil {
+		t.Fatalf("delete file: %v", err)
+	}
+
+	items, err := service.ListByUser(ctx, userID)
+	if err != nil {
+		t.Fatalf("list files after delete: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no visible files after delete, got %d", len(items))
+	}
+
+	if _, err := service.OpenDownload(ctx, userID, initResult.FileID); !errors.Is(err, ErrFileNotFound) {
+		t.Fatalf("expected ErrFileNotFound after delete, got %v", err)
+	}
+
+	if _, err := os.Stat(record.StoragePath); !os.IsNotExist(err) {
+		t.Fatalf("expected storage file removed, got err=%v", err)
+	}
+
+	var uploadTaskCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM upload_tasks WHERE file_id = ?`, initResult.FileID).Scan(&uploadTaskCount); err != nil {
+		t.Fatalf("count upload tasks: %v", err)
+	}
+	if uploadTaskCount != 0 {
+		t.Fatalf("expected upload tasks removed, got %d", uploadTaskCount)
 	}
 }
 

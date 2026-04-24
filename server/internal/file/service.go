@@ -522,6 +522,9 @@ WHERE user_id = ? AND file_id = ?
 		return Record{}, fmt.Errorf("load download file: %w", err)
 	}
 
+	if item.Status == "deleted" {
+		return Record{}, ErrFileNotFound
+	}
 	if item.Status != "available" {
 		return Record{}, ErrFileNotAvailable
 	}
@@ -535,6 +538,82 @@ WHERE user_id = ? AND file_id = ?
 		return Record{}, fmt.Errorf("stat download file: %w", err)
 	}
 	return item, nil
+}
+
+func (s *Service) Delete(ctx context.Context, userID int64, fileID string) error {
+	record, err := s.loadFile(ctx, userID, fileID)
+	if err != nil {
+		return err
+	}
+	if record.Status == "deleted" {
+		return ErrFileNotFound
+	}
+
+	uploadIDs, err := s.listUploadIDsByFile(ctx, userID, fileID)
+	if err != nil {
+		return err
+	}
+	chunkPaths, err := s.listChunkPathsByFile(ctx, fileID)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete file tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+UPDATE files
+SET status = 'deleted', updated_at = CURRENT_TIMESTAMP
+WHERE user_id = ? AND file_id = ?
+`, userID, fileID); err != nil {
+		return fmt.Errorf("mark file deleted: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM file_chunks
+WHERE file_id = ?
+`, fileID); err != nil {
+		return fmt.Errorf("delete file chunks: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM upload_tasks
+WHERE user_id = ? AND file_id = ?
+`, userID, fileID); err != nil {
+		return fmt.Errorf("delete upload tasks: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete file tx: %w", err)
+	}
+
+	if strings.TrimSpace(record.StoragePath) != "" {
+		if err := os.Remove(record.StoragePath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove final file: %w", err)
+		}
+	}
+
+	for _, chunkPath := range chunkPaths {
+		if strings.TrimSpace(chunkPath) == "" {
+			continue
+		}
+		if err := os.Remove(chunkPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove chunk file: %w", err)
+		}
+	}
+	for _, uploadID := range uploadIDs {
+		if strings.TrimSpace(uploadID) == "" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Dir(s.storage.ChunkPath(userID, uploadID, 0))); err != nil {
+			return fmt.Errorf("remove chunk dir: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) ensureDeviceBelongsToUser(ctx context.Context, userID int64, deviceID string) error {
@@ -583,6 +662,36 @@ LIMIT 1
 		return Record{}, false, fmt.Errorf("find available file: %w", err)
 	}
 	return item, true, nil
+}
+
+func (s *Service) loadFile(ctx context.Context, userID int64, fileID string) (Record, error) {
+	var item Record
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, user_id, file_id, file_name, file_size, file_hash, COALESCE(mime_type, ''), COALESCE(uploader_device_id, ''),
+       COALESCE(storage_path, ''), status, created_at, updated_at
+FROM files
+WHERE user_id = ? AND file_id = ?
+`, userID, fileID).Scan(
+		&item.ID,
+		&item.UserID,
+		&item.FileID,
+		&item.FileName,
+		&item.FileSize,
+		&item.FileHash,
+		&item.MIMEType,
+		&item.UploaderDeviceID,
+		&item.StoragePath,
+		&item.Status,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return Record{}, ErrFileNotFound
+		}
+		return Record{}, fmt.Errorf("load file: %w", err)
+	}
+	return item, nil
 }
 
 func (s *Service) findReusableTask(ctx context.Context, userID int64, fileHash string, fileSize int64) (uploadTaskRow, bool, error) {
@@ -645,6 +754,56 @@ WHERE user_id = ? AND upload_id = ?
 		return uploadTaskRow{}, fmt.Errorf("load upload task: %w", err)
 	}
 	return item, nil
+}
+
+func (s *Service) listUploadIDsByFile(ctx context.Context, userID int64, fileID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT upload_id
+FROM upload_tasks
+WHERE user_id = ? AND file_id = ?
+`, userID, fileID)
+	if err != nil {
+		return nil, fmt.Errorf("list upload ids: %w", err)
+	}
+	defer rows.Close()
+
+	var uploadIDs []string
+	for rows.Next() {
+		var uploadID string
+		if err := rows.Scan(&uploadID); err != nil {
+			return nil, fmt.Errorf("scan upload id: %w", err)
+		}
+		uploadIDs = append(uploadIDs, uploadID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate upload ids: %w", err)
+	}
+	return uploadIDs, nil
+}
+
+func (s *Service) listChunkPathsByFile(ctx context.Context, fileID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT COALESCE(storage_path, '')
+FROM file_chunks
+WHERE file_id = ?
+`, fileID)
+	if err != nil {
+		return nil, fmt.Errorf("list chunk paths: %w", err)
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var current string
+		if err := rows.Scan(&current); err != nil {
+			return nil, fmt.Errorf("scan chunk path: %w", err)
+		}
+		paths = append(paths, current)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chunk paths: %w", err)
+	}
+	return paths, nil
 }
 
 func (s *Service) listUploadedChunkIndexes(ctx context.Context, uploadID string) ([]int, error) {

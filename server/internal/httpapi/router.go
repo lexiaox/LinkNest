@@ -293,48 +293,73 @@ func handleFileRoutes(service *file.Service) http.HandlerFunc {
 			return
 		}
 
-		fileID, action, ok := splitTail(r.URL.Path, "/api/files/")
-		if !ok || fileID == "" || action != "download" {
+		trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/files/"), "/")
+		if trimmed == "" {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Method != http.MethodGet {
-			response.Error(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-			return
+
+		parts := strings.Split(trimmed, "/")
+		fileID := parts[0]
+		action := ""
+		if len(parts) > 1 {
+			action = strings.Join(parts[1:], "/")
 		}
 
-		record, err := service.OpenDownload(r.Context(), user.ID, fileID)
-		if err != nil {
-			switch {
-			case errors.Is(err, file.ErrFileNotFound):
-				response.Error(w, http.StatusNotFound, "FILE_NOT_FOUND", "file does not exist or does not belong to current user")
-			case errors.Is(err, file.ErrFileNotAvailable):
-				response.Error(w, http.StatusConflict, "FILE_NOT_AVAILABLE", "file is not available for download")
-			default:
-				response.Error(w, http.StatusInternalServerError, "FILE_DOWNLOAD_FAILED", err.Error())
+		switch {
+		case r.Method == http.MethodDelete && action == "":
+			if err := service.Delete(r.Context(), user.ID, fileID); err != nil {
+				if errors.Is(err, file.ErrFileNotFound) {
+					response.Error(w, http.StatusNotFound, "FILE_NOT_FOUND", "file does not exist or does not belong to current user")
+					return
+				}
+				response.Error(w, http.StatusInternalServerError, "FILE_DELETE_FAILED", err.Error())
+				return
 			}
+			response.JSON(w, http.StatusOK, map[string]interface{}{
+				"file_id": fileID,
+				"deleted": true,
+				"status":  "deleted",
+			})
+			return
+		case r.Method == http.MethodGet && action == "download":
+			record, err := service.OpenDownload(r.Context(), user.ID, fileID)
+			if err != nil {
+				switch {
+				case errors.Is(err, file.ErrFileNotFound):
+					response.Error(w, http.StatusNotFound, "FILE_NOT_FOUND", "file does not exist or does not belong to current user")
+				case errors.Is(err, file.ErrFileNotAvailable):
+					response.Error(w, http.StatusConflict, "FILE_NOT_AVAILABLE", "file is not available for download")
+				default:
+					response.Error(w, http.StatusInternalServerError, "FILE_DOWNLOAD_FAILED", err.Error())
+				}
+				return
+			}
+
+			input, err := os.Open(record.StoragePath)
+			if err != nil {
+				response.Error(w, http.StatusInternalServerError, "FILE_DOWNLOAD_FAILED", err.Error())
+				return
+			}
+			defer input.Close()
+
+			info, err := input.Stat()
+			if err != nil {
+				response.Error(w, http.StatusInternalServerError, "FILE_DOWNLOAD_FAILED", err.Error())
+				return
+			}
+
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", path.Base(record.FileName)))
+			w.Header().Set("X-File-Hash", record.FileHash)
+			if record.MIMEType != "" {
+				w.Header().Set("Content-Type", record.MIMEType)
+			}
+			http.ServeContent(w, r, record.FileName, info.ModTime(), input)
+			return
+		default:
+			http.NotFound(w, r)
 			return
 		}
-
-		input, err := os.Open(record.StoragePath)
-		if err != nil {
-			response.Error(w, http.StatusInternalServerError, "FILE_DOWNLOAD_FAILED", err.Error())
-			return
-		}
-		defer input.Close()
-
-		info, err := input.Stat()
-		if err != nil {
-			response.Error(w, http.StatusInternalServerError, "FILE_DOWNLOAD_FAILED", err.Error())
-			return
-		}
-
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", path.Base(record.FileName)))
-		w.Header().Set("X-File-Hash", record.FileHash)
-		if record.MIMEType != "" {
-			w.Header().Set("Content-Type", record.MIMEType)
-		}
-		http.ServeContent(w, r, record.FileName, info.ModTime(), input)
 	}
 }
 
