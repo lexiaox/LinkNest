@@ -95,9 +95,9 @@ func TestBindCurrentDevicePersistsDeviceConfig(t *testing.T) {
 		t.Fatalf("device.Save() error = %v", err)
 	}
 
-	service, err := New(root)
+	service, err := NewWithClientVersion(root, "desktop-0.1.0")
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewWithClientVersion() error = %v", err)
 	}
 
 	originalRegister := registerDevice
@@ -132,7 +132,7 @@ func TestStopHeartbeatCancelsRunningWorker(t *testing.T) {
 		DeviceID:      "device-1",
 		DeviceName:    "demo-device",
 		DeviceType:    "windows",
-		ClientVersion: desktopClientVersion,
+		ClientVersion: "desktop-0.1.0",
 	}
 	if err := clientconfig.EnsureRoot(root); err != nil {
 		t.Fatalf("EnsureRoot() error = %v", err)
@@ -202,7 +202,7 @@ func TestStopHeartbeatReturnsEvenIfWorkerIgnoresStop(t *testing.T) {
 		DeviceID:      "device-1",
 		DeviceName:    "demo-device",
 		DeviceType:    "windows",
-		ClientVersion: desktopClientVersion,
+		ClientVersion: "desktop-0.1.0",
 	}
 	if err := clientconfig.EnsureRoot(root); err != nil {
 		t.Fatalf("EnsureRoot() error = %v", err)

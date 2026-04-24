@@ -14,7 +14,7 @@ import (
 	clientws "linknest/client/internal/websocket"
 )
 
-const desktopClientVersion = "desktop-0.1.0"
+const defaultClientVersion = "client-0.1.0"
 
 var registerDevice = device.Register
 var heartbeatStopWait = 2 * time.Second
@@ -34,6 +34,7 @@ type Snapshot struct {
 
 type Service struct {
 	root            string
+	clientVersion   string
 	mu              sync.Mutex
 	cfg             clientconfig.ClientConfig
 	heartbeatFn     HeartbeatFunc
@@ -43,6 +44,10 @@ type Service struct {
 }
 
 func New(root string) (*Service, error) {
+	return NewWithClientVersion(root, defaultClientVersion)
+}
+
+func NewWithClientVersion(root string, clientVersion string) (*Service, error) {
 	if err := clientconfig.EnsureRoot(root); err != nil {
 		return nil, err
 	}
@@ -52,10 +57,16 @@ func New(root string) (*Service, error) {
 		return nil, err
 	}
 
+	clientVersion = strings.TrimSpace(clientVersion)
+	if clientVersion == "" {
+		clientVersion = defaultClientVersion
+	}
+
 	return &Service{
-		root:        root,
-		cfg:         cfg,
-		heartbeatFn: clientws.RunHeartbeatUntil,
+		root:          root,
+		clientVersion: clientVersion,
+		cfg:           cfg,
+		heartbeatFn:   clientws.RunHeartbeatUntil,
 	}, nil
 }
 
@@ -161,7 +172,7 @@ func (s *Service) BindCurrentDevice(deviceName string, deviceType string) (devic
 		return device.Profile{}, err
 	}
 
-	profile, err := device.Init(s.root, deviceName, deviceType, desktopClientVersion)
+	profile, err := device.Init(s.root, deviceName, deviceType, s.clientVersion)
 	if err != nil {
 		return device.Profile{}, err
 	}

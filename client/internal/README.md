@@ -1,10 +1,11 @@
 # client/internal
 
-客户端内部模块目录，按认证、配置、设备、传输和 WebSocket 拆分。这些模块同时被 CLI 和 Windows 桌面端复用。
+客户端内部模块目录，按认证、配置、设备、传输和 WebSocket 拆分。这些模块同时被 CLI、Windows 桌面端和 Android 移动端复用。
 
 ## 文件结构
 
 - `README.md`：本目录说明。
+- `appsvc/`：桌面端和移动端共用的客户端服务层。
 - `auth/`：认证接口调用。
 - `config/`：本地配置读写。
 - `device/`：设备初始化、本地设备文件、设备接口调用。
