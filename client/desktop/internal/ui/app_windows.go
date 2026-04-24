@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"linknest/client/desktop/internal/appsvc"
 	"linknest/client/internal/device"
@@ -16,6 +17,12 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
+)
+
+const (
+	deviceItemHeight = 94
+	fileItemHeight   = 76
+	taskItemHeight   = 94
 )
 
 type DesktopApp struct {
@@ -29,8 +36,12 @@ type DesktopApp struct {
 	passwordEntry *widget.Entry
 	deviceName    *widget.Entry
 	deviceType    *widget.Entry
-	statusLabel   *widget.Label
-	snapshotLabel *widget.Label
+
+	statusLabel      *widget.Label
+	snapshotLabel    *widget.Label
+	activityLabel    *widget.Label
+	lastRefreshLabel *widget.Label
+	busyBar          *widget.ProgressBarInfinite
 
 	devices        []device.RemoteDevice
 	selectedDevice int
@@ -40,9 +51,13 @@ type DesktopApp struct {
 	selectedFile int
 	fileList     *widget.List
 
-	tasks        []transfer.RemoteTask
-	selectedTask int
-	taskList     *widget.List
+	tasks                []transfer.RemoteTask
+	selectedTask         int
+	taskList             *widget.List
+	selectedTaskLabel    *widget.Label
+	selectedTaskProgress *widget.ProgressBar
+
+	autoRefreshStopCh chan struct{}
 }
 
 func Launch(root string) error {
@@ -59,10 +74,16 @@ func Launch(root string) error {
 		selectedTask:   -1,
 	}
 	gui.window = gui.app.NewWindow("LinkNest Desktop")
-	gui.window.Resize(fyne.NewSize(1180, 760))
+	gui.window.Resize(fyne.NewSize(1240, 820))
 	gui.window.SetContent(gui.buildContent())
+	gui.window.SetCloseIntercept(func() {
+		gui.stopAutoRefresh()
+		gui.svc.StopHeartbeat()
+		gui.window.Close()
+	})
 	gui.refreshSnapshot()
 	gui.preloadDataIfReady()
+	gui.startAutoRefresh()
 	gui.window.ShowAndRun()
 	return nil
 }
@@ -91,13 +112,22 @@ func (d *DesktopApp) buildContent() fyne.CanvasObject {
 	d.statusLabel = widget.NewLabel("就绪。")
 	d.statusLabel.Wrapping = fyne.TextWrapWord
 
+	d.activityLabel = widget.NewLabel("后台当前没有正在执行的操作。")
+	d.activityLabel.Wrapping = fyne.TextWrapWord
+
+	d.lastRefreshLabel = widget.NewLabel("最近自动刷新：尚未开始")
+	d.lastRefreshLabel.Wrapping = fyne.TextWrapWord
+
+	d.busyBar = widget.NewProgressBarInfinite()
+	d.busyBar.Hide()
+
 	d.snapshotLabel = widget.NewLabel("")
 	d.snapshotLabel.Wrapping = fyne.TextWrapWord
 
 	accountTab := container.NewTabItem("账号", d.buildAccountTab())
 	deviceTab := container.NewTabItem("设备", d.buildDeviceTab())
 	fileTab := container.NewTabItem("文件", d.buildFileTab())
-	taskTab := container.NewTabItem("任务", d.buildTaskTab())
+	taskTab := container.NewTabItem("上传任务", d.buildTaskTab())
 
 	tabs := container.NewAppTabs(accountTab, deviceTab, fileTab, taskTab)
 	tabs.SetTabLocation(container.TabLocationTop)
@@ -108,9 +138,17 @@ func (d *DesktopApp) buildContent() fyne.CanvasObject {
 		d.snapshotLabel,
 	)
 
+	footer := container.NewVBox(
+		widget.NewSeparator(),
+		d.activityLabel,
+		d.busyBar,
+		d.lastRefreshLabel,
+		d.statusLabel,
+	)
+
 	return container.NewBorder(
 		container.NewVBox(header, widget.NewSeparator()),
-		container.NewVBox(widget.NewSeparator(), d.statusLabel),
+		footer,
 		nil,
 		nil,
 		tabs,
@@ -128,29 +166,36 @@ func (d *DesktopApp) buildAccountTab() fyne.CanvasObject {
 	})
 
 	loginButton := widget.NewButton("登录", func() {
-		result, err := d.svc.Login(d.usernameEntry.Text, d.passwordEntry.Text)
-		if err != nil {
-			d.showError(err)
-			return
-		}
-		d.setStatus(fmt.Sprintf("登录成功，当前用户：%s", result.User.Username))
-		d.refreshSnapshot()
-		d.preloadDataIfReady()
+		var username string
+		d.runAsync("正在登录...", func() error {
+			result, err := d.svc.Login(d.usernameEntry.Text, d.passwordEntry.Text)
+			if err != nil {
+				return err
+			}
+			username = result.User.Username
+			return nil
+		}, func() {
+			d.setStatus(fmt.Sprintf("登录成功，当前用户：%s", username))
+			d.preloadDataIfReady()
+		})
 	})
 
 	registerButton := widget.NewButton("注册", func() {
-		result, err := d.svc.Register(d.usernameEntry.Text, d.emailEntry.Text, d.passwordEntry.Text)
-		if err != nil {
-			d.showError(err)
-			return
-		}
-		message := fmt.Sprintf("注册成功，当前用户：%s", result.User.Username)
-		if strings.TrimSpace(result.Notice) != "" {
-			message = message + "；" + strings.TrimSpace(result.Notice)
-		}
-		d.setStatus(message)
-		d.refreshSnapshot()
-		d.preloadDataIfReady()
+		var message string
+		d.runAsync("正在注册账号...", func() error {
+			result, err := d.svc.Register(d.usernameEntry.Text, d.emailEntry.Text, d.passwordEntry.Text)
+			if err != nil {
+				return err
+			}
+			message = fmt.Sprintf("注册成功，当前用户：%s", result.User.Username)
+			if strings.TrimSpace(result.Notice) != "" {
+				message += "；" + strings.TrimSpace(result.Notice)
+			}
+			return nil
+		}, func() {
+			d.setStatus(message)
+			d.preloadDataIfReady()
+		})
 	})
 
 	deleteButton := widget.NewButton("注销账号", func() {
@@ -158,22 +203,28 @@ func (d *DesktopApp) buildAccountTab() fyne.CanvasObject {
 			if !ok {
 				return
 			}
-			result, err := d.svc.DeleteAccount(d.passwordEntry.Text)
-			if err != nil {
-				d.showError(err)
-				return
-			}
-			d.devices = nil
-			d.files = nil
-			d.tasks = nil
-			d.selectedDevice = -1
-			d.selectedFile = -1
-			d.selectedTask = -1
-			d.deviceList.Refresh()
-			d.fileList.Refresh()
-			d.taskList.Refresh()
-			d.setStatus(fmt.Sprintf("账号 %s 已注销，服务器数据已清理。", result.User.Username))
-			d.refreshSnapshot()
+
+			var deletedUser string
+			d.runAsync("正在注销账号并清理服务器数据...", func() error {
+				result, err := d.svc.DeleteAccount(d.passwordEntry.Text)
+				if err != nil {
+					return err
+				}
+				deletedUser = result.User.Username
+				return nil
+			}, func() {
+				d.devices = nil
+				d.files = nil
+				d.tasks = nil
+				d.selectedDevice = -1
+				d.selectedFile = -1
+				d.selectedTask = -1
+				d.deviceList.Refresh()
+				d.fileList.Refresh()
+				d.taskList.Refresh()
+				d.updateSelectedTaskSummary()
+				d.setStatus(fmt.Sprintf("账号 %s 已注销，服务器数据已清理。", deletedUser))
+			})
 		}, d.window)
 	})
 
@@ -206,18 +257,23 @@ func (d *DesktopApp) buildDeviceTab() fyne.CanvasObject {
 	}
 
 	bindButton := widget.NewButton("绑定当前设备", func() {
-		profile, err := d.svc.BindCurrentDevice(d.deviceName.Text, d.deviceType.Text)
-		if err != nil {
-			d.showError(err)
-			return
-		}
-		d.setStatus(fmt.Sprintf("设备已绑定：%s (%s)", profile.DeviceName, profile.DeviceID))
-		d.refreshSnapshot()
-		d.refreshDevices()
+		var profile device.Profile
+		d.runAsync("正在绑定当前设备...", func() error {
+			var err error
+			profile, err = d.svc.BindCurrentDevice(d.deviceName.Text, d.deviceType.Text)
+			return err
+		}, func() {
+			d.setStatus(fmt.Sprintf("设备已绑定：%s (%s)", profile.DeviceName, profile.DeviceID))
+			d.refreshDevices(false)
+		})
 	})
 
 	refreshButton := widget.NewButton("刷新设备列表", func() {
-		d.refreshDevices()
+		d.runAsync("正在刷新设备列表...", func() error {
+			return d.refreshDevices(true)
+		}, func() {
+			d.setStatus(fmt.Sprintf("设备列表已刷新，共 %d 台设备。", len(d.devices)))
+		})
 	})
 
 	startHeartbeatButton := widget.NewButton("开始在线心跳", func() {
@@ -268,7 +324,11 @@ func (d *DesktopApp) buildFileTab() fyne.CanvasObject {
 	}
 
 	refreshButton := widget.NewButton("刷新文件列表", func() {
-		d.refreshFiles()
+		d.runAsync("正在刷新文件列表...", func() error {
+			return d.refreshFiles(true)
+		}, func() {
+			d.setStatus(fmt.Sprintf("文件列表已刷新，共 %d 个文件。", len(d.files)))
+		})
 	})
 
 	uploadButton := widget.NewButton("上传文件", func() {
@@ -280,15 +340,21 @@ func (d *DesktopApp) buildFileTab() fyne.CanvasObject {
 			if reader == nil {
 				return
 			}
+
 			path := reader.URI().Path()
 			_ = reader.Close()
-			if err := d.svc.Upload(path); err != nil {
-				d.showError(err)
-				return
-			}
-			d.setStatus(fmt.Sprintf("上传完成：%s", path))
-			d.refreshFiles()
-			d.refreshTasks()
+
+			d.runAsync("正在上传文件...", func() error {
+				if err := d.svc.Upload(path); err != nil {
+					return err
+				}
+				if err := d.refreshFiles(true); err != nil {
+					return err
+				}
+				return d.refreshTasks(true)
+			}, func() {
+				d.setStatus(fmt.Sprintf("上传完成：%s", path))
+			})
 		}, d.window)
 		open.Show()
 	})
@@ -307,13 +373,15 @@ func (d *DesktopApp) buildFileTab() fyne.CanvasObject {
 			if writer == nil {
 				return
 			}
+
 			path := writer.URI().Path()
 			_ = writer.Close()
-			if err := d.svc.Download(file.FileID, path); err != nil {
-				d.showError(err)
-				return
-			}
-			d.setStatus(fmt.Sprintf("下载完成：%s -> %s", file.FileName, path))
+
+			d.runAsync("正在下载文件...", func() error {
+				return d.svc.Download(file.FileID, path)
+			}, func() {
+				d.setStatus(fmt.Sprintf("下载完成：%s -> %s", file.FileName, path))
+			})
 		}, d.window)
 		save.SetFileName(file.FileName)
 		save.Show()
@@ -329,13 +397,18 @@ func (d *DesktopApp) buildFileTab() fyne.CanvasObject {
 			if !ok {
 				return
 			}
-			if err := d.svc.DeleteFile(file.FileID); err != nil {
-				d.showError(err)
-				return
-			}
-			d.setStatus(fmt.Sprintf("文件已删除：%s", file.FileName))
-			d.refreshFiles()
-			d.refreshTasks()
+
+			d.runAsync("正在删除文件...", func() error {
+				if err := d.svc.DeleteFile(file.FileID); err != nil {
+					return err
+				}
+				if err := d.refreshFiles(true); err != nil {
+					return err
+				}
+				return d.refreshTasks(true)
+			}, func() {
+				d.setStatus(fmt.Sprintf("文件已删除：%s", file.FileName))
+			})
 		}, d.window)
 	})
 
@@ -365,10 +438,24 @@ func (d *DesktopApp) buildTaskTab() fyne.CanvasObject {
 	)
 	d.taskList.OnSelected = func(id widget.ListItemID) {
 		d.selectedTask = id
+		d.updateSelectedTaskSummary()
 	}
 
+	d.selectedTaskLabel = widget.NewLabel("请选择一条上传任务查看详情。这里显示的是每次文件上传或续传的记录。")
+	d.selectedTaskLabel.Wrapping = fyne.TextWrapWord
+
+	d.selectedTaskProgress = widget.NewProgressBar()
+	d.selectedTaskProgress.Min = 0
+	d.selectedTaskProgress.Max = 1
+	d.selectedTaskProgress.SetValue(0)
+	d.selectedTaskProgress.Hide()
+
 	refreshButton := widget.NewButton("刷新任务列表", func() {
-		d.refreshTasks()
+		d.runAsync("正在刷新任务列表...", func() error {
+			return d.refreshTasks(true)
+		}, func() {
+			d.setStatus(fmt.Sprintf("上传任务列表已刷新，共 %d 条任务。", len(d.tasks)))
+		})
 	})
 
 	resumeButton := widget.NewButton("继续选中任务", func() {
@@ -377,17 +464,24 @@ func (d *DesktopApp) buildTaskTab() fyne.CanvasObject {
 			d.showError(err)
 			return
 		}
-		if err := d.svc.ResumeTask(task.UploadID); err != nil {
-			d.showError(err)
-			return
-		}
-		d.setStatus(fmt.Sprintf("任务已继续：%s", task.UploadID))
-		d.refreshTasks()
-		d.refreshFiles()
+
+		d.runAsync("正在继续上传任务...", func() error {
+			if err := d.svc.ResumeTask(task.UploadID); err != nil {
+				return err
+			}
+			if err := d.refreshTasks(true); err != nil {
+				return err
+			}
+			return d.refreshFiles(true)
+		}, func() {
+			d.setStatus(fmt.Sprintf("上传任务已继续：%s", task.UploadID))
+		})
 	})
 
 	return container.NewBorder(
 		container.NewVBox(
+			d.selectedTaskLabel,
+			d.selectedTaskProgress,
 			container.NewGridWithColumns(2, refreshButton, resumeButton),
 			widget.NewSeparator(),
 		),
@@ -403,45 +497,126 @@ func (d *DesktopApp) preloadDataIfReady() {
 	if !snapshot.HasToken {
 		return
 	}
-	d.refreshDevices()
-	d.refreshFiles()
-	d.refreshTasks()
+	_ = d.refreshDevices(true)
+	_ = d.refreshFiles(true)
+	_ = d.refreshTasks(true)
 }
 
-func (d *DesktopApp) refreshDevices() {
+func (d *DesktopApp) startAutoRefresh() {
+	if d.autoRefreshStopCh != nil {
+		return
+	}
+
+	stopCh := make(chan struct{})
+	d.autoRefreshStopCh = stopCh
+
+	go func() {
+		ticker := time.NewTicker(8 * time.Second)
+		defer ticker.Stop()
+
+		cycle := 0
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+			}
+
+			snapshot := d.svc.Snapshot()
+			if !snapshot.HasToken {
+				continue
+			}
+
+			cycle++
+
+			devices, devErr := d.svc.ListDevices()
+			tasks, taskErr := d.svc.ListTasks()
+			var files []transfer.RemoteFile
+			var fileErr error
+			if cycle%2 == 0 {
+				files, fileErr = d.svc.ListFiles()
+			}
+
+			now := time.Now()
+			fyne.Do(func() {
+				if devErr == nil {
+					d.devices = devices
+					d.deviceList.Refresh()
+					applyListHeight(d.deviceList, len(d.devices), deviceItemHeight)
+				}
+				if taskErr == nil {
+					d.tasks = tasks
+					d.taskList.Refresh()
+					applyListHeight(d.taskList, len(d.tasks), taskItemHeight)
+					d.updateSelectedTaskSummary()
+				}
+				if fileErr == nil && files != nil {
+					d.files = files
+					d.fileList.Refresh()
+					applyListHeight(d.fileList, len(d.files), fileItemHeight)
+				}
+				d.lastRefreshLabel.SetText("最近自动刷新：" + now.Format("2006-01-02 15:04:05"))
+				d.refreshSnapshot()
+			})
+		}
+	}()
+}
+
+func (d *DesktopApp) stopAutoRefresh() {
+	if d.autoRefreshStopCh == nil {
+		return
+	}
+	close(d.autoRefreshStopCh)
+	d.autoRefreshStopCh = nil
+}
+
+func (d *DesktopApp) refreshDevices(silent bool) error {
 	items, err := d.svc.ListDevices()
 	if err != nil {
-		d.showError(err)
-		return
+		if !silent {
+			d.showError(err)
+		}
+		return err
 	}
 	d.devices = items
 	d.selectedDevice = -1
 	d.deviceList.Refresh()
-	d.setStatus(fmt.Sprintf("设备列表已刷新，共 %d 台设备。", len(items)))
+	applyListHeight(d.deviceList, len(d.devices), deviceItemHeight)
+	d.markRefreshed()
+	return nil
 }
 
-func (d *DesktopApp) refreshFiles() {
+func (d *DesktopApp) refreshFiles(silent bool) error {
 	items, err := d.svc.ListFiles()
 	if err != nil {
-		d.showError(err)
-		return
+		if !silent {
+			d.showError(err)
+		}
+		return err
 	}
 	d.files = items
 	d.selectedFile = -1
 	d.fileList.Refresh()
-	d.setStatus(fmt.Sprintf("文件列表已刷新，共 %d 个文件。", len(items)))
+	applyListHeight(d.fileList, len(d.files), fileItemHeight)
+	d.markRefreshed()
+	return nil
 }
 
-func (d *DesktopApp) refreshTasks() {
+func (d *DesktopApp) refreshTasks(silent bool) error {
 	items, err := d.svc.ListTasks()
 	if err != nil {
-		d.showError(err)
-		return
+		if !silent {
+			d.showError(err)
+		}
+		return err
 	}
 	d.tasks = items
 	d.selectedTask = -1
 	d.taskList.Refresh()
-	d.setStatus(fmt.Sprintf("任务列表已刷新，共 %d 条任务。", len(items)))
+	applyListHeight(d.taskList, len(d.tasks), taskItemHeight)
+	d.updateSelectedTaskSummary()
+	d.markRefreshed()
+	return nil
 }
 
 func (d *DesktopApp) refreshSnapshot() {
@@ -462,7 +637,7 @@ func (d *DesktopApp) refreshSnapshot() {
 		heartbeatText = "运行中"
 	}
 	if strings.TrimSpace(snapshot.HeartbeatError) != "" {
-		heartbeatText = heartbeatText + "；最近错误：" + strings.TrimSpace(snapshot.HeartbeatError)
+		heartbeatText += "；最近错误：" + strings.TrimSpace(snapshot.HeartbeatError)
 	}
 
 	d.snapshotLabel.SetText(fmt.Sprintf(
@@ -473,6 +648,31 @@ func (d *DesktopApp) refreshSnapshot() {
 		heartbeatText,
 		d.svc.Root(),
 	))
+}
+
+func (d *DesktopApp) updateSelectedTaskSummary() {
+	if d.selectedTask < 0 || d.selectedTask >= len(d.tasks) {
+		d.selectedTaskLabel.SetText("请选择一条上传任务查看详情。自动刷新会保持上传进度为最新状态。")
+		d.selectedTaskProgress.SetValue(0)
+		d.selectedTaskProgress.Hide()
+		return
+	}
+
+	task := d.tasks[d.selectedTask]
+	progress := 0.0
+	if task.TotalChunks > 0 {
+		progress = float64(task.UploadedChunks) / float64(task.TotalChunks)
+	}
+	d.selectedTaskLabel.SetText(fmt.Sprintf(
+		"当前上传任务：%s\nUploadID: %s\n进度：%d / %d | 状态：%s",
+		task.FileName,
+		task.UploadID,
+		task.UploadedChunks,
+		task.TotalChunks,
+		taskStatusText(task.Status),
+	))
+	d.selectedTaskProgress.SetValue(progress)
+	d.selectedTaskProgress.Show()
 }
 
 func (d *DesktopApp) selectedRemoteFile() (transfer.RemoteFile, error) {
@@ -489,11 +689,47 @@ func (d *DesktopApp) selectedRemoteTask() (transfer.RemoteTask, error) {
 	return d.tasks[d.selectedTask], nil
 }
 
+func (d *DesktopApp) runAsync(activity string, work func() error, onSuccess func()) {
+	d.startBusy(activity)
+
+	go func() {
+		err := work()
+		fyne.Do(func() {
+			d.stopBusy()
+			if err != nil {
+				d.showError(err)
+				return
+			}
+			if onSuccess != nil {
+				onSuccess()
+			}
+			d.refreshSnapshot()
+		})
+	}()
+}
+
+func (d *DesktopApp) startBusy(activity string) {
+	d.activityLabel.SetText(activity)
+	d.busyBar.Show()
+	d.busyBar.Start()
+}
+
+func (d *DesktopApp) stopBusy() {
+	d.busyBar.Stop()
+	d.busyBar.Hide()
+	if strings.TrimSpace(d.activityLabel.Text) == "" {
+		d.activityLabel.SetText("后台当前没有正在执行的操作。")
+	}
+}
+
 func (d *DesktopApp) showError(err error) {
 	if err == nil {
 		return
 	}
 	d.setStatus("操作失败：" + err.Error())
+	d.activityLabel.SetText("后台当前没有正在执行的操作。")
+	d.busyBar.Stop()
+	d.busyBar.Hide()
 	dialog.ShowError(err, d.window)
 	d.refreshSnapshot()
 }
@@ -505,6 +741,10 @@ func (d *DesktopApp) setStatus(message string) {
 	d.statusLabel.SetText(message)
 }
 
+func (d *DesktopApp) markRefreshed() {
+	d.lastRefreshLabel.SetText("最近自动刷新：" + time.Now().Format("2006-01-02 15:04:05"))
+}
+
 func formatDeviceItem(item device.RemoteDevice) string {
 	return fmt.Sprintf("%s\nID: %s\n类型: %s | 状态: %s | 最近在线: %s", item.DeviceName, item.DeviceID, item.DeviceType, item.Status, emptyAs(item.LastSeenAt, "-"))
 }
@@ -514,7 +754,16 @@ func formatFileItem(item transfer.RemoteFile) string {
 }
 
 func formatTaskItem(item transfer.RemoteTask) string {
-	return fmt.Sprintf("%s\nUploadID: %s\n文件ID: %s | 进度: %d/%d | 状态: %s", item.FileName, item.UploadID, item.FileID, item.UploadedChunks, item.TotalChunks, item.Status)
+	return fmt.Sprintf("%s\n上传ID: %s\n文件ID: %s | 进度: %d/%d | 状态: %s", item.FileName, item.UploadID, item.FileID, item.UploadedChunks, item.TotalChunks, taskStatusText(item.Status))
+}
+
+func applyListHeight(list *widget.List, count int, height float32) {
+	if list == nil {
+		return
+	}
+	for i := 0; i < count; i++ {
+		list.SetItemHeight(i, height)
+	}
 }
 
 func emptyAs(value string, fallback string) string {
@@ -522,4 +771,19 @@ func emptyAs(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func taskStatusText(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "initialized":
+		return "已初始化"
+	case "uploading":
+		return "上传中"
+	case "failed":
+		return "失败"
+	case "completed":
+		return "已完成"
+	default:
+		return emptyAs(status, "未知")
+	}
 }

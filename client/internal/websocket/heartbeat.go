@@ -14,6 +14,10 @@ import (
 )
 
 func RunHeartbeat(serverURL string, token string, profile device.Profile, interval time.Duration) error {
+	return RunHeartbeatUntil(serverURL, token, profile, interval, nil)
+}
+
+func RunHeartbeatUntil(serverURL string, token string, profile device.Profile, interval time.Duration, stop <-chan struct{}) error {
 	wsURL, err := toWebSocketURL(strings.TrimRight(serverURL, "/"), profile.DeviceID)
 	if err != nil {
 		return err
@@ -37,18 +41,37 @@ func RunHeartbeat(serverURL string, token string, profile device.Profile, interv
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	if err := conn.WriteJSON(device.HeartbeatPayload(profile)); err != nil {
+	writeHeartbeat := func() error {
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		return conn.WriteJSON(device.HeartbeatPayload(profile))
+	}
+
+	if err := writeHeartbeat(); err != nil {
 		return err
 	}
 
-	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
-			return err
+	readErrCh := make(chan error, 1)
+	go func() {
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				readErrCh <- err
+				return
+			}
 		}
+	}()
 
-		<-ticker.C
-		if err := conn.WriteJSON(device.HeartbeatPayload(profile)); err != nil {
+	for {
+		select {
+		case <-stop:
+			_ = conn.Close()
+			return nil
+		case err := <-readErrCh:
 			return err
+		case <-ticker.C:
+			if err := writeHeartbeat(); err != nil {
+				return err
+			}
 		}
 	}
 }

@@ -18,7 +18,7 @@ const desktopClientVersion = "desktop-0.1.0"
 
 var registerDevice = device.Register
 
-type HeartbeatFunc func(serverURL string, token string, profile device.Profile, interval time.Duration) error
+type HeartbeatFunc func(serverURL string, token string, profile device.Profile, interval time.Duration, stop <-chan struct{}) error
 
 type Snapshot struct {
 	ServerURL        string
@@ -54,7 +54,7 @@ func New(root string) (*Service, error) {
 	return &Service{
 		root:        root,
 		cfg:         cfg,
-		heartbeatFn: clientws.RunHeartbeat,
+		heartbeatFn: clientws.RunHeartbeatUntil,
 	}, nil
 }
 
@@ -270,7 +270,7 @@ func (s *Service) StartHeartbeat() error {
 			default:
 			}
 
-			err := s.heartbeatFn(serverURL, token, profile, 5*time.Second)
+			err := s.heartbeatFn(serverURL, token, profile, 5*time.Second, stopCh)
 			if err != nil {
 				s.mu.Lock()
 				s.heartbeatErr = err.Error()
@@ -300,7 +300,10 @@ func (s *Service) StopHeartbeat() {
 		close(stopCh)
 	}
 	if doneCh != nil {
-		<-doneCh
+		select {
+		case <-doneCh:
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 
