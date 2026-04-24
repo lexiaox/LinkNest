@@ -54,12 +54,14 @@ func run() error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 
-	authService := auth.NewService(db, cfg.Auth)
-	deviceService := device.NewService(db)
-	fileService := file.NewService(db, storage.Local{
+	localStorage := storage.Local{
 		RootDir:  cfg.Storage.RootDir,
 		ChunkDir: cfg.Storage.ChunkDir,
-	})
+	}
+
+	authService := auth.NewService(db, cfg.Auth, localStorage)
+	deviceService := device.NewService(db)
+	fileService := file.NewService(db, localStorage)
 	taskService := task.NewService(db)
 	wsHandler := lnwebsocket.NewHandler(deviceService)
 
