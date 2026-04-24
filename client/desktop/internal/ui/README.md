@@ -4,4 +4,4 @@
 
 目录结构：
 
-- `app_windows.go`：Windows GUI 的窗口、页签和交互逻辑，包含后台状态提示、自动刷新、上传任务详情和文件操作按钮。
+- `app_windows.go`：Windows GUI 的窗口、页签和交互逻辑，包含后台状态提示、自动刷新、上传任务详情和文件操作按钮。桌面端应用标识使用中性的 `org.linknest.desktop`，不绑定个人域名。

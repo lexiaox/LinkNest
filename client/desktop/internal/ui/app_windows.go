@@ -68,7 +68,7 @@ func Launch(root string) error {
 
 	gui := &DesktopApp{
 		svc:            svc,
-		app:            app.NewWithID("top.ledouya.linknest.desktop"),
+		app:            app.NewWithID("org.linknest.desktop"),
 		selectedDevice: -1,
 		selectedFile:   -1,
 		selectedTask:   -1,
