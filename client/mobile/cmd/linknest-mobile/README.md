@@ -4,4 +4,5 @@
 
 目录结构：
 
+- `Icon.png`：Android 打包时使用的应用图标资源。
 - `main_android.go`：Android 端入口。
