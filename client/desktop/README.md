@@ -6,7 +6,8 @@
 
 Windows 原生构建说明：
 
-- 入口：`go build ./client/desktop/cmd/linknest-desktop`
+- 推荐先创建输出目录：`mkdir -p ./bin`
+- 入口：`go build -o ./bin/linknest-desktop.exe ./client/desktop/cmd/linknest-desktop`
 - 由于 Fyne 的 Windows 图形栈依赖 `CGO`，本机需要可用的 `gcc`/`g++` 工具链
 - 推荐使用 MSYS2 UCRT64 的 `gcc` / `g++`
 - 如果本机只有 Go 而没有 C 编译器，WSL 侧 `go test ./...` 仍然可以通过，但 Windows GUI 可执行文件无法直接编出来

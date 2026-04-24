@@ -112,6 +112,7 @@ http://<server>:8080/login
 编译命令：
 
 ```bash
+mkdir -p ./bin
 go build -o ./bin/linknest-desktop.exe ./client/desktop/cmd/linknest-desktop
 ```
 
