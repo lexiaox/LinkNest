@@ -17,6 +17,7 @@ import (
 const desktopClientVersion = "desktop-0.1.0"
 
 var registerDevice = device.Register
+var heartbeatStopWait = 2 * time.Second
 
 type HeartbeatFunc func(serverURL string, token string, profile device.Profile, interval time.Duration, stop <-chan struct{}) error
 
@@ -302,7 +303,7 @@ func (s *Service) StopHeartbeat() {
 	if doneCh != nil {
 		select {
 		case <-doneCh:
-		case <-time.After(2 * time.Second):
+		case <-time.After(heartbeatStopWait):
 		}
 	}
 }
