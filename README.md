@@ -119,7 +119,7 @@ go build -o ./bin/linknest-desktop.exe ./client/desktop/cmd/linknest-desktop
 
 ## 作为 Android 用户怎么使用移动端
 
-Android GUI 使用底部页签和手机单列布局。账号页使用短标签竖向表单，长 URL、ID、路径和文件名会自动换行或缩短展示，状态信息显示在内容顶部，避免挤占底部页签和中间列表区域。
+Android GUI 使用底部页签和手机单列布局。账号页使用短标签竖向表单，长 URL、ID、路径和文件名会自动换行或缩短展示，状态信息显示在内容顶部，避免挤占底部页签和中间列表区域。Android 端下载文件会优先保存到系统公共 Downloads 目录，系统拒绝写入时才回退到应用沙箱 Documents 目录。
 
 ### 自己构建 Android 安装包
 
