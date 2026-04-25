@@ -17,6 +17,7 @@ import (
 const defaultClientVersion = "client-0.1.0"
 
 var registerDevice = device.Register
+var listDevices = device.List
 var heartbeatStopWait = 2 * time.Second
 
 type HeartbeatFunc func(serverURL string, token string, profile device.Profile, interval time.Duration, stop <-chan struct{}) error
@@ -199,7 +200,11 @@ func (s *Service) ListDevices() ([]device.RemoteDevice, error) {
 	if err != nil {
 		return nil, err
 	}
-	return device.List(serverURL, token)
+	items, err := listDevices(serverURL, token)
+	if err != nil {
+		return nil, err
+	}
+	return device.OnlineOnly(items), nil
 }
 
 func (s *Service) ListFiles() ([]transfer.RemoteFile, error) {

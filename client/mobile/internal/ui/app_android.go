@@ -893,7 +893,7 @@ func emptyAs(value string, fallback string) string {
 
 func safeFileName(value string) string {
 	name := filepath.Base(strings.TrimSpace(value))
-	if name == "." || name == string(filepath.Separator) || name == "" {
+	if name == "." || name == ".." || name == string(filepath.Separator) || name == "" {
 		return fmt.Sprintf("linknest-download-%d", time.Now().UnixNano())
 	}
 	return name
@@ -908,7 +908,7 @@ func writableDownloadDir() (string, bool) {
 	return "", false
 }
 
-func canWriteDir(dir string) bool {
+func canWriteDir(dir string) (ok bool) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return false
 	}
@@ -918,11 +918,13 @@ func canWriteDir(dir string) bool {
 		return false
 	}
 	name := probe.Name()
-	closeErr := probe.Close()
-	removeErr := os.Remove(name)
-	if closeErr != nil || removeErr != nil {
-		return false
-	}
+	defer func() {
+		closeErr := probe.Close()
+		removeErr := os.Remove(name)
+		if closeErr != nil || removeErr != nil {
+			ok = false
+		}
+	}()
 	return true
 }
 
