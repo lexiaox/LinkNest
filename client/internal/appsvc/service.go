@@ -1,6 +1,7 @@
 package appsvc
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"linknest/client/internal/auth"
 	clientconfig "linknest/client/internal/config"
 	"linknest/client/internal/device"
+	"linknest/client/internal/p2p"
 	"linknest/client/internal/transfer"
 	clientws "linknest/client/internal/websocket"
 )
@@ -31,6 +33,12 @@ type Snapshot struct {
 	ClientVersion    string
 	HeartbeatRunning bool
 	HeartbeatError   string
+	P2PEnabled       bool
+	P2PRunning       bool
+	P2PPort          int
+	P2PInbox         string
+	P2PError         string
+	FallbackToCloud  bool
 }
 
 type Service struct {
@@ -42,6 +50,8 @@ type Service struct {
 	heartbeatStopCh chan struct{}
 	heartbeatDoneCh chan struct{}
 	heartbeatErr    string
+	p2pServer       *p2p.Server
+	p2pErr          string
 }
 
 func New(root string) (*Service, error) {
@@ -88,6 +98,12 @@ func (s *Service) Snapshot() Snapshot {
 		ClientVersion:    s.cfg.Device.ClientVersion,
 		HeartbeatRunning: s.heartbeatStopCh != nil,
 		HeartbeatError:   s.heartbeatErr,
+		P2PEnabled:       clientconfig.P2PEnabledValue(s.cfg.Transfer),
+		P2PRunning:       s.p2pServer != nil,
+		P2PPort:          s.p2pPortLocked(),
+		P2PInbox:         s.cfg.Transfer.InboxDir,
+		P2PError:         s.p2pErr,
+		FallbackToCloud:  clientconfig.FallbackToCloudEnabled(s.cfg.Transfer),
 	}
 }
 
@@ -255,6 +271,114 @@ func (s *Service) ResumeTask(uploadID string) error {
 	return transfer.Resume(s.root, cfg, strings.TrimSpace(uploadID))
 }
 
+func (s *Service) ListTransfers() ([]transfer.TransferTask, error) {
+	serverURL, token, err := s.requireToken()
+	if err != nil {
+		return nil, err
+	}
+	return transfer.ListTransfers(serverURL, token)
+}
+
+func (s *Service) TransferDetail(transferID string) (transfer.TransferTask, error) {
+	serverURL, token, err := s.requireToken()
+	if err != nil {
+		return transfer.TransferTask{}, err
+	}
+	return transfer.TransferDetail(serverURL, token, strings.TrimSpace(transferID))
+}
+
+func (s *Service) SendTransfer(localPath string, targetDeviceID string) error {
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return err
+	}
+	return transfer.Send(s.root, cfg, strings.TrimSpace(localPath), strings.TrimSpace(targetDeviceID))
+}
+
+func (s *Service) FallbackTransfer(transferID string) error {
+	serverURL, token, err := s.requireToken()
+	if err != nil {
+		return err
+	}
+	return transfer.RequestFallback(serverURL, token, strings.TrimSpace(transferID))
+}
+
+func (s *Service) StartP2P() error {
+	_, _, err := s.requireToken()
+	if err != nil {
+		return err
+	}
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return err
+	}
+	if !clientconfig.P2PEnabledValue(cfg.Transfer) {
+		return errors.New("p2p is disabled in config")
+	}
+	profile, err := device.Load(s.root)
+	if err != nil {
+		return fmt.Errorf("load device profile: %w", err)
+	}
+
+	wasHeartbeatRunning := s.Snapshot().HeartbeatRunning
+	if wasHeartbeatRunning {
+		s.StopHeartbeat()
+	}
+
+	s.mu.Lock()
+	if s.p2pServer != nil {
+		s.mu.Unlock()
+		if wasHeartbeatRunning {
+			_ = s.StartHeartbeat()
+		}
+		return errors.New("p2p service is already running")
+	}
+	s.mu.Unlock()
+
+	server, err := p2p.Start(s.root, cfg, profile)
+	if err != nil {
+		s.mu.Lock()
+		s.p2pErr = err.Error()
+		s.mu.Unlock()
+		if wasHeartbeatRunning {
+			_ = s.StartHeartbeat()
+		}
+		return err
+	}
+
+	s.mu.Lock()
+	s.p2pServer = server
+	s.p2pErr = ""
+	s.mu.Unlock()
+
+	if wasHeartbeatRunning {
+		return s.StartHeartbeat()
+	}
+	return nil
+}
+
+func (s *Service) StopP2P() {
+	wasHeartbeatRunning := s.Snapshot().HeartbeatRunning
+	if wasHeartbeatRunning {
+		s.StopHeartbeat()
+	}
+
+	s.mu.Lock()
+	server := s.p2pServer
+	s.p2pServer = nil
+	s.mu.Unlock()
+
+	if server != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = server.Shutdown(ctx)
+		cancel()
+	}
+
+	if wasHeartbeatRunning {
+		_ = s.StartHeartbeat()
+	}
+}
+
 func (s *Service) StartHeartbeat() error {
 	serverURL, token, err := s.requireToken()
 	if err != nil {
@@ -271,6 +395,7 @@ func (s *Service) StartHeartbeat() error {
 		s.mu.Unlock()
 		return errors.New("heartbeat is already running")
 	}
+	p2pOptions := s.p2pHeartbeatOptionsLocked()
 	stopCh := make(chan struct{})
 	doneCh := make(chan struct{})
 	s.heartbeatStopCh = stopCh
@@ -287,7 +412,12 @@ func (s *Service) StartHeartbeat() error {
 			default:
 			}
 
-			err := s.heartbeatFn(serverURL, token, profile, 5*time.Second, stopCh)
+			var err error
+			if p2pOptions.P2PEnabled {
+				err = clientws.RunHeartbeatUntilWithOptions(serverURL, token, profile, p2pOptions, 5*time.Second, stopCh)
+			} else {
+				err = s.heartbeatFn(serverURL, token, profile, 5*time.Second, stopCh)
+			}
 			if err != nil {
 				s.mu.Lock()
 				s.heartbeatErr = err.Error()
@@ -361,4 +491,23 @@ func (s *Service) serverURL() string {
 
 func (s *Service) saveLocked() error {
 	return clientconfig.Save(s.root, s.cfg)
+}
+
+func (s *Service) p2pPortLocked() int {
+	if s.p2pServer != nil {
+		return s.p2pServer.Port()
+	}
+	return s.cfg.Transfer.P2PPort
+}
+
+func (s *Service) p2pHeartbeatOptionsLocked() device.HeartbeatOptions {
+	if s.p2pServer == nil {
+		return device.HeartbeatOptions{}
+	}
+	return device.HeartbeatOptions{
+		P2PEnabled:  true,
+		P2PPort:     s.p2pServer.Port(),
+		P2PProtocol: "http",
+		VirtualIP:   s.cfg.Transfer.VirtualIP,
+	}
 }

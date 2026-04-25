@@ -486,10 +486,11 @@ async function setupDevicesPage() {
       const items = body.items || [];
       const onlineItems = items.filter((item) => String(item.status || "").trim().toLowerCase() === "online");
       const hiddenCount = items.length - onlineItems.length;
+      const p2pReady = onlineItems.filter((item) => item.p2p_enabled && Number(item.p2p_port || 0) > 0).length;
       document.getElementById("devices-summary").innerHTML = renderSummaryCards([
         { label: "在线设备", value: String(onlineItems.length), note: "当前页面只显示在线设备" },
+        { label: "P2P 可用", value: String(p2pReady), note: "已上报 P2P 服务端口的在线设备" },
         { label: "已隐藏离线", value: String(hiddenCount), note: "离线设备不会出现在列表中" },
-        { label: "设备记录", value: String(items.length), note: "服务端保留的全部设备记录" },
       ]);
       document.getElementById("devices-table").innerHTML = renderDevicesTable(onlineItems);
       setAutoRefreshStatus("devices-auto-status", refreshIntervalMs, new Date());
@@ -517,6 +518,7 @@ function renderDevicesTable(items) {
           <th>设备</th>
           <th>状态</th>
           <th>网络</th>
+          <th>P2P</th>
           <th>客户端</th>
           <th>最近在线</th>
         </tr>
@@ -535,6 +537,12 @@ function renderDevicesTable(items) {
                 <td>
                   <div>${escapeHTML(item.lan_ip || "-")}</div>
                   <div class="mono">port: ${escapeHTML(item.port || 0)}</div>
+                  ${item.virtual_ip ? `<div class="mono">vip: ${escapeHTML(item.virtual_ip)}</div>` : ""}
+                </td>
+                <td>
+                  ${item.p2p_enabled ? statusPill("enabled") : statusPill("disabled")}
+                  <div class="mono">${escapeHTML(item.p2p_protocol || "http")}:${escapeHTML(item.p2p_port || 0)}</div>
+                  <div>${escapeHTML(candidateLabel(item))}</div>
                 </td>
                 <td>${escapeHTML(item.client_version || "-")}</td>
                 <td>${escapeHTML(formatDate(item.last_seen_at))}</td>
@@ -545,6 +553,20 @@ function renderDevicesTable(items) {
       </tbody>
     </table>
   `;
+}
+
+function candidateLabel(item) {
+  if (!item.p2p_enabled || !item.p2p_port) {
+    return "-";
+  }
+  const candidates = [];
+  if (item.lan_ip && Number(item.p2p_port || 0) > 0) {
+    candidates.push("LAN");
+  }
+  if (item.virtual_ip && Number(item.p2p_port || 0) > 0) {
+    candidates.push("Virtual");
+  }
+  return candidates.length ? candidates.join(" / ") : "-";
 }
 
 async function setupFilesPage() {
@@ -1396,22 +1418,27 @@ async function setupTasksPage() {
       if (trigger === "manual" || trigger === "initial") {
         setMessage("正在刷新任务列表...", "info");
       }
-      const { body } = await apiFetch("/api/tasks");
-      const items = body.items || [];
+      const [uploadResult, transferResult] = await Promise.all([apiFetch("/api/tasks"), apiFetch("/api/transfers")]);
+      const items = uploadResult.body.items || [];
+      const transfers = transferResult.body.items || [];
       document.getElementById("tasks-summary").innerHTML = renderSummaryCards([
         { label: "总任务数", value: String(items.length), note: "当前账号下的上传任务记录" },
+        { label: "V2 传输", value: String(transfers.length), note: "P2P 或 cloud fallback 传输任务" },
         {
           label: "进行中",
-          value: String(items.filter((item) => ["initialized", "uploading"].includes(String(item.status).toLowerCase())).length),
+          value: String(
+            items.filter((item) => ["initialized", "uploading"].includes(String(item.status).toLowerCase())).length +
+              transfers.filter((item) => ["initialized", "probing", "transferring", "fallback_uploading"].includes(String(item.status).toLowerCase())).length
+          ),
           note: "尚未完成的任务",
         },
-        {
-          label: "已完成",
-          value: String(items.filter((item) => String(item.status).toLowerCase() === "completed").length),
-          note: "已经合并并校验通过",
-        },
       ]);
-      document.getElementById("tasks-table").innerHTML = renderTasksTable(items);
+      document.getElementById("tasks-table").innerHTML = `
+        <h2 class="section-title">V2 传输任务</h2>
+        ${renderTransferTasksTable(transfers)}
+        <h2 class="section-title">V1 上传任务</h2>
+        ${renderTasksTable(items)}
+      `;
       setAutoRefreshStatus("tasks-auto-status", refreshIntervalMs, new Date());
       if (trigger === "manual" || trigger === "initial") {
         setMessage(`任务列表已刷新，当前共有 ${items.length} 条任务记录。`, "success");
@@ -1424,6 +1451,57 @@ async function setupTasksPage() {
   document.getElementById("refresh-tasks").addEventListener("click", () => refresh("manual"));
   await refresh("initial");
   setupAutoRefresh(refresh, refreshIntervalMs);
+}
+
+function renderTransferTasksTable(items) {
+  if (!items.length) {
+    return `<div class="empty-state">当前还没有 V2 传输任务。CLI 执行 <code>linknest transfer send</code> 后会出现在这里。</div>`;
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>传输</th>
+          <th>文件</th>
+          <th>设备</th>
+          <th>路径</th>
+          <th>状态</th>
+          <th>失败原因</th>
+          <th>更新时间</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items
+          .map(
+            (item) => `
+              <tr>
+                <td><span class="mono">${escapeHTML(item.transfer_id || "-")}</span></td>
+                <td>
+                  <strong>${escapeHTML(item.file_name || "-")}</strong><br />
+                  <span>${escapeHTML(formatBytes(Number(item.file_size || 0)))}</span>
+                </td>
+                <td>
+                  <div class="mono">from: ${escapeHTML(item.source_device_id || "-")}</div>
+                  <div class="mono">to: ${escapeHTML(item.target_device_id || "-")}</div>
+                </td>
+                <td>
+                  <div>preferred: ${escapeHTML(item.preferred_route || "-")}</div>
+                  <div>actual: ${escapeHTML(item.actual_route || "-")}</div>
+                  <div class="mono">${escapeHTML(item.selected_candidate || "-")}</div>
+                </td>
+                <td>${statusPill(item.status)}</td>
+                <td>
+                  <div>${escapeHTML(item.error_code || "-")}</div>
+                  <div>${escapeHTML(item.error_message || "")}</div>
+                </td>
+                <td>${escapeHTML(formatDate(item.updated_at))}</td>
+              </tr>
+            `
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
 }
 
 function renderTasksTable(items) {

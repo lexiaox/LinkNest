@@ -19,8 +19,10 @@ import (
 	"linknest/server/internal/device"
 	"linknest/server/internal/file"
 	"linknest/server/internal/httpapi"
+	"linknest/server/internal/p2ptoken"
 	"linknest/server/internal/storage"
 	"linknest/server/internal/task"
+	servertransfer "linknest/server/internal/transfer"
 	lnwebsocket "linknest/server/internal/websocket"
 )
 
@@ -63,6 +65,8 @@ func run() error {
 	deviceService := device.NewService(db)
 	fileService := file.NewService(db, localStorage)
 	taskService := task.NewService(db)
+	p2pTokenService := p2ptoken.New([]byte(cfg.Auth.JWTSecret), 10*time.Minute)
+	transferService := servertransfer.NewService(db, deviceService, p2pTokenService)
 	wsHandler := lnwebsocket.NewHandler(deviceService)
 
 	handler := httpapi.NewRouter(httpapi.Dependencies{
@@ -70,6 +74,7 @@ func run() error {
 		Device:    deviceService,
 		File:      fileService,
 		Task:      taskService,
+		Transfer:  transferService,
 		WebSocket: wsHandler,
 		StaticDir: filepath.Join("server", "web", "static"),
 	})

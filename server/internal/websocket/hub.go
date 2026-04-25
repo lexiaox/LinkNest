@@ -25,6 +25,11 @@ type heartbeatMessage struct {
 	DeviceType    string `json:"device_type"`
 	LanIP         string `json:"lan_ip"`
 	Port          int    `json:"port"`
+	P2PEnabled    bool   `json:"p2p_enabled"`
+	P2PPort       int    `json:"p2p_port"`
+	P2PProtocol   string `json:"p2p_protocol"`
+	VirtualIP     string `json:"virtual_ip"`
+	PublicIP      string `json:"public_ip"`
 	ClientVersion string `json:"client_version"`
 	Timestamp     string `json:"timestamp"`
 }
@@ -89,6 +94,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			DeviceType:    msg.DeviceType,
 			LanIP:         msg.LanIP,
 			Port:          msg.Port,
+			P2PEnabled:    msg.P2PEnabled,
+			P2PPort:       msg.P2PPort,
+			P2PProtocol:   msg.P2PProtocol,
+			VirtualIP:     msg.VirtualIP,
+			PublicIP:      msg.PublicIP,
 			ClientVersion: msg.ClientVersion,
 			Timestamp:     msg.Timestamp,
 		})

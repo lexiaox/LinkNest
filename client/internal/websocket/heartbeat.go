@@ -18,6 +18,10 @@ func RunHeartbeat(serverURL string, token string, profile device.Profile, interv
 }
 
 func RunHeartbeatUntil(serverURL string, token string, profile device.Profile, interval time.Duration, stop <-chan struct{}) error {
+	return RunHeartbeatUntilWithOptions(serverURL, token, profile, device.HeartbeatOptions{}, interval, stop)
+}
+
+func RunHeartbeatUntilWithOptions(serverURL string, token string, profile device.Profile, options device.HeartbeatOptions, interval time.Duration, stop <-chan struct{}) error {
 	wsURL, err := toWebSocketURL(strings.TrimRight(serverURL, "/"), profile.DeviceID)
 	if err != nil {
 		return err
@@ -43,7 +47,7 @@ func RunHeartbeatUntil(serverURL string, token string, profile device.Profile, i
 
 	writeHeartbeat := func() error {
 		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		return conn.WriteJSON(device.HeartbeatPayload(profile))
+		return conn.WriteJSON(device.HeartbeatPayloadWithOptions(profile, options))
 	}
 
 	if err := writeHeartbeat(); err != nil {

@@ -2,11 +2,14 @@
 
 LinkNest 是一个可运行的多端文件传输原型，提供服务端、Web UI、CLI、Windows 桌面端、Android 移动端和 Docker 部署方式。你可以把它部署到自己的服务器上，然后通过浏览器、CLI、Windows GUI 或 Android GUI 登录同一个账号、绑定设备、上传文件、下载文件、删除文件、查看任务状态，以及在不再需要时注销账号并清理自己的数据。
 
+V2 在保留 V1 云端分片上传、断点续传和下载能力的基础上，新增“P2P 直传优先，V1 云端链路兜底”的传输路径。CLI 是协议验证入口；Web UI 展示 P2P 能力和传输诊断；Windows / Android GUI 复用共享 client service，不单独实现传输协议。
+
 ## 我能用它做什么
 
 - 在自己的服务器上部署一个可访问的文件传输服务
 - 用浏览器登录账号，查看在线设备、文件和任务
 - 用 CLI 把当前电脑绑定成一个设备并保持在线
+- 用 CLI 启动本机 P2P 接收服务，并向同账号在线设备发起 `transfer send`
 - 在 Windows 桌面端里完成登录、绑定设备、文件管理和上传任务查看
 - 在 Android 移动端里完成登录、绑定设备、文件管理和上传任务查看
 - 上传大文件、断点续传、补传缺失分片
@@ -80,9 +83,9 @@ http://<server>:8080/login
 
 3. 登录后按页面使用：
 
-- `Devices`：查看当前账号下的在线设备，离线设备会自动隐藏
+- `Devices`：查看当前账号下的在线设备、P2P 能力、监听端口和候选地址类型，离线设备会自动隐藏
 - `Files`：上传文件、查看文件列表、下载文件、删除文件
-- `Tasks`：查看上传任务、续传状态和进度
+- `Tasks`：查看 V1 上传任务和 V2 P2P/cloud 传输任务、路径、失败原因和回退状态
 - 页面右上角的 `注销账号`：输入当前密码后删除该账号及其设备、文件和上传记录
 
 ### 手机怎么用
@@ -100,7 +103,8 @@ http://<server>:8080/login
 2. 解压后运行 `linknest-desktop.exe`。
 3. 在账号页先保存服务器地址，再登录或注册。
 4. 在设备页绑定当前设备，并按需启动在线心跳。
-5. 在文件页上传、下载和删除文件，在上传任务页查看任务状态。
+5. 在设备页可以启动/停止 P2P 服务；在文件页选择目标在线设备后可以发起 P2P 优先传输。
+6. 在文件页上传、下载和删除文件，在上传任务页查看 V1 上传任务和 V2 传输任务状态。
 
 ### 自己编译 Windows 桌面端
 
@@ -119,7 +123,7 @@ go build -o ./bin/linknest-desktop.exe ./client/desktop/cmd/linknest-desktop
 
 ## 作为 Android 用户怎么使用移动端
 
-Android GUI 使用底部页签和手机单列布局。账号页使用短标签竖向表单，长 URL、ID、路径和文件名会自动换行或缩短展示，状态信息显示在内容顶部，避免挤占底部页签和中间列表区域。Android 端下载文件会优先保存到系统公共 Downloads 目录，系统拒绝写入时才回退到应用沙箱 Documents 目录。
+Android GUI 使用底部页签和手机单列布局。账号页使用短标签竖向表单，长 URL、ID、路径和文件名会自动换行或缩短展示，状态信息显示在内容顶部，避免挤占底部页签和中间列表区域。设备页可以启动/停止 P2P 服务，文件页可以选择目标在线设备并发起 P2P 优先传输，任务页展示 V1 上传任务和 V2 传输任务。Android 端下载文件会优先保存到系统公共 Downloads 目录，系统拒绝写入时才回退到应用沙箱 Documents 目录。
 
 ### 自己构建 Android 安装包
 
@@ -177,6 +181,18 @@ go run ./client/cmd/linknest online
 
 这会持续发送设备心跳，让当前设备在设备页里显示为在线。
 
+如果要让当前设备可接收 V2 P2P 直传，启动 P2P 接收服务：
+
+```bash
+go run ./client/cmd/linknest p2p serve
+```
+
+查看本机 P2P 配置：
+
+```bash
+go run ./client/cmd/linknest p2p status
+```
+
 查看在线设备：
 
 ```bash
@@ -184,6 +200,25 @@ go run ./client/cmd/linknest device list
 ```
 
 设备列表默认只显示在线设备。DHCP 场景下历史离线设备会继续保留在服务端记录中，但不会出现在 CLI、Web UI、Windows 桌面端或 Android 移动端的设备列表里。
+
+向同账号在线设备发起 V2 传输：
+
+```bash
+go run ./client/cmd/linknest transfer send ./demo.zip --to <device_id>
+```
+
+查看 V2 传输任务：
+
+```bash
+go run ./client/cmd/linknest transfer list
+go run ./client/cmd/linknest transfer detail <transfer_id>
+```
+
+如果 P2P 探测、连接或 hash 校验失败，默认自动回退到 V1 云端分片上传链路。也可以手动请求回退：
+
+```bash
+go run ./client/cmd/linknest transfer fallback <transfer_id>
+```
 
 ## 怎么上传、下载、删除文件、查看任务和注销账号
 

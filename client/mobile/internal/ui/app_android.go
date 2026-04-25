@@ -65,7 +65,12 @@ type MobileApp struct {
 	selectedTaskLabel    *widget.Label
 	selectedTaskProgress *widget.ProgressBar
 
-	downloadDirOnce  sync.Once
+	transfers             []transfer.TransferTask
+	selectedTransfer      int
+	transferList          *widget.List
+	selectedTransferLabel *widget.Label
+
+	downloadDirOnce   sync.Once
 	cachedDownloadDir string
 
 	autoRefreshStopCh chan struct{}
@@ -81,17 +86,19 @@ func Launch() error {
 	}
 
 	gui := &MobileApp{
-		svc:            svc,
-		app:            fyneApp,
-		selectedDevice: -1,
-		selectedFile:   -1,
-		selectedTask:   -1,
+		svc:              svc,
+		app:              fyneApp,
+		selectedDevice:   -1,
+		selectedFile:     -1,
+		selectedTask:     -1,
+		selectedTransfer: -1,
 	}
 	gui.window = fyneApp.NewWindow("LinkNest Mobile")
 	gui.window.SetContent(gui.buildContent())
 	gui.window.SetCloseIntercept(func() {
 		gui.stopAutoRefresh()
 		gui.svc.StopHeartbeat()
+		gui.svc.StopP2P()
 		gui.window.Close()
 	})
 	gui.initDownloadDir()
@@ -228,13 +235,17 @@ func (m *MobileApp) buildAccountTab() fyne.CanvasObject {
 				m.devices = nil
 				m.files = nil
 				m.tasks = nil
+				m.transfers = nil
 				m.selectedDevice = -1
 				m.selectedFile = -1
 				m.selectedTask = -1
+				m.selectedTransfer = -1
 				m.deviceList.Refresh()
 				m.fileList.Refresh()
 				m.taskList.Refresh()
+				m.transferList.Refresh()
 				m.updateSelectedTaskSummary()
+				m.updateSelectedTransferSummary()
 				m.setStatus(fmt.Sprintf("账号 %s 已注销。", deletedUser))
 			})
 		}, m.window)
@@ -313,6 +324,27 @@ func (m *MobileApp) buildDeviceTab() fyne.CanvasObject {
 		m.refreshSnapshot()
 	})
 
+	startP2PButton := widget.NewButton("启动 P2P 服务", func() {
+		var devices []device.RemoteDevice
+		m.runAsync("正在启动 P2P 接收服务...", func() error {
+			if err := m.svc.StartP2P(); err != nil {
+				return err
+			}
+			var err error
+			devices, err = m.svc.ListDevices()
+			return err
+		}, func() {
+			m.applyDevices(devices)
+			m.setStatus("P2P 接收服务已启动。")
+		})
+	})
+
+	stopP2PButton := widget.NewButton("停止 P2P 服务", func() {
+		m.svc.StopP2P()
+		m.setStatus("P2P 接收服务已停止。")
+		m.refreshSnapshot()
+	})
+
 	controls := container.NewVBox(
 		widget.NewForm(
 			widget.NewFormItem("设备名", m.deviceName),
@@ -322,6 +354,8 @@ func (m *MobileApp) buildDeviceTab() fyne.CanvasObject {
 		refreshButton,
 		startButton,
 		stopButton,
+		startP2PButton,
+		stopP2PButton,
 		widget.NewSeparator(),
 	)
 	return container.NewBorder(controls, nil, nil, nil, m.deviceList)
@@ -446,11 +480,53 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 		}, m.window)
 	})
 
+	sendButton := widget.NewButton("P2P 发送到选中设备", func() {
+		target, err := m.selectedRemoteDevice()
+		if err != nil {
+			m.showError(err)
+			return
+		}
+		dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+			if err != nil {
+				m.showError(err)
+				return
+			}
+			if reader == nil {
+				return
+			}
+
+			tempPath, copyErr := m.persistUploadSelection(reader)
+			if copyErr != nil {
+				m.showError(copyErr)
+				return
+			}
+
+			var tasks []transfer.RemoteTask
+			var transfers []transfer.TransferTask
+			m.runAsync("正在发起 V2 传输...", func() error {
+				if err := m.svc.SendTransfer(tempPath, target.DeviceID); err != nil {
+					return err
+				}
+				var err error
+				tasks, err = m.svc.ListTasks()
+				if err != nil {
+					return err
+				}
+				transfers, err = m.svc.ListTransfers()
+				return err
+			}, func() {
+				m.applyTasksAndTransfers(tasks, transfers)
+				m.setStatus(fmt.Sprintf("传输已完成：%s -> %s", filepath.Base(tempPath), target.DeviceName))
+			})
+		}, m.window).Show()
+	})
+
 	m.downloadHint = wrappingLabel("下载保存位置：系统 Downloads（可能为 /storage/emulated/0/Download 或 /sdcard/Download）。如果系统拒绝写入，会自动回退到应用沙箱 Documents。")
 
 	controls := container.NewVBox(
 		refreshButton,
 		uploadButton,
+		sendButton,
 		downloadButton,
 		deleteButton,
 		m.downloadHint,
@@ -460,6 +536,22 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 }
 
 func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
+	m.transferList = widget.NewList(
+		func() int { return len(m.transfers) },
+		func() fyne.CanvasObject {
+			label := widget.NewLabel("")
+			label.Wrapping = fyne.TextWrapBreak
+			return label
+		},
+		func(id widget.ListItemID, item fyne.CanvasObject) {
+			item.(*widget.Label).SetText(formatTransferItem(m.transfers[id]))
+		},
+	)
+	m.transferList.OnSelected = func(id widget.ListItemID) {
+		m.selectedTransfer = id
+		m.updateSelectedTransferSummary()
+	}
+
 	m.taskList = widget.NewList(
 		func() int { return len(m.tasks) },
 		func() fyne.CanvasObject {
@@ -484,15 +576,23 @@ func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
 	m.selectedTaskProgress.Max = 1
 	m.selectedTaskProgress.Hide()
 
+	m.selectedTransferLabel = widget.NewLabel("请选择一条 V2 传输任务查看 P2P/cloud 路径和失败原因。")
+	m.selectedTransferLabel.Wrapping = fyne.TextWrapBreak
+
 	refreshButton := widget.NewButton("刷新任务列表", func() {
 		var tasks []transfer.RemoteTask
+		var transfers []transfer.TransferTask
 		m.runAsync("正在刷新任务列表...", func() error {
 			var err error
 			tasks, err = m.svc.ListTasks()
+			if err != nil {
+				return err
+			}
+			transfers, err = m.svc.ListTransfers()
 			return err
 		}, func() {
-			m.applyTasks(tasks)
-			m.setStatus(fmt.Sprintf("上传任务列表已刷新，共 %d 条任务。", len(m.tasks)))
+			m.applyTasksAndTransfers(tasks, transfers)
+			m.setStatus(fmt.Sprintf("任务列表已刷新，V1 %d 条，V2 %d 条。", len(m.tasks), len(m.transfers)))
 		})
 	})
 
@@ -524,13 +624,23 @@ func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
 	})
 
 	controls := container.NewVBox(
+		m.selectedTransferLabel,
 		m.selectedTaskLabel,
 		m.selectedTaskProgress,
 		refreshButton,
 		resumeButton,
 		widget.NewSeparator(),
 	)
-	return container.NewBorder(controls, nil, nil, nil, m.taskList)
+	return container.NewBorder(
+		controls,
+		nil,
+		nil,
+		nil,
+		container.NewVSplit(
+			container.NewBorder(wrappingLabel("V2 传输任务"), nil, nil, nil, m.transferList),
+			container.NewBorder(wrappingLabel("V1 上传任务"), nil, nil, nil, m.taskList),
+		),
+	)
 }
 
 func (m *MobileApp) initDownloadDir() {
@@ -619,6 +729,7 @@ func (m *MobileApp) startAutoRefresh() {
 
 			devices, devErr := m.svc.ListDevices()
 			tasks, taskErr := m.svc.ListTasks()
+			transfers, transferErr := m.svc.ListTransfers()
 			var files []transfer.RemoteFile
 			fetchedFiles := false
 			var fileErr error
@@ -639,6 +750,12 @@ func (m *MobileApp) startAutoRefresh() {
 					m.taskList.Refresh()
 					applyListHeight(m.taskList, len(m.tasks), mobileTaskHeight)
 					m.updateSelectedTaskSummary()
+				}
+				if transferErr == nil {
+					m.transfers = transfers
+					m.transferList.Refresh()
+					applyListHeight(m.transferList, len(m.transfers), mobileTaskHeight)
+					m.updateSelectedTransferSummary()
 				}
 				if fileErr == nil && fetchedFiles {
 					m.applyFiles(files)
@@ -698,11 +815,23 @@ func (m *MobileApp) refreshTasks(silent bool) error {
 		}
 		return err
 	}
+	transfers, err := m.svc.ListTransfers()
+	if err != nil {
+		if !silent {
+			m.showError(err)
+		}
+		return err
+	}
 	m.tasks = items
+	m.transfers = transfers
 	m.selectedTask = -1
+	m.selectedTransfer = -1
 	m.taskList.Refresh()
+	m.transferList.Refresh()
 	applyListHeight(m.taskList, len(m.tasks), mobileTaskHeight)
+	applyListHeight(m.transferList, len(m.transfers), mobileTaskHeight)
 	m.updateSelectedTaskSummary()
+	m.updateSelectedTransferSummary()
 	m.markRefreshed()
 	return nil
 }
@@ -732,6 +861,20 @@ func (m *MobileApp) applyTasks(items []transfer.RemoteTask) {
 	m.markRefreshed()
 }
 
+func (m *MobileApp) applyTasksAndTransfers(tasks []transfer.RemoteTask, transfers []transfer.TransferTask) {
+	m.tasks = tasks
+	m.transfers = transfers
+	m.selectedTask = -1
+	m.selectedTransfer = -1
+	m.taskList.Refresh()
+	m.transferList.Refresh()
+	applyListHeight(m.taskList, len(m.tasks), mobileTaskHeight)
+	applyListHeight(m.transferList, len(m.transfers), mobileTaskHeight)
+	m.updateSelectedTaskSummary()
+	m.updateSelectedTransferSummary()
+	m.markRefreshed()
+}
+
 func (m *MobileApp) refreshSnapshot() {
 	snapshot := m.svc.Snapshot()
 
@@ -754,11 +897,15 @@ func (m *MobileApp) refreshSnapshot() {
 	}
 
 	m.snapshotLabel.SetText(fmt.Sprintf(
-		"服务器：%s\n登录状态：%s\n当前设备：%s\n在线心跳：%s\n本地目录：%s",
+		"服务器：%s\n登录状态：%s\n当前设备：%s\n在线心跳：%s\nP2P：enabled=%t running=%t port=%d fallback=%t\n本地目录：%s",
 		emptyAs(snapshot.ServerURL, "未设置"),
 		tokenText,
 		deviceText,
 		heartbeatText,
+		snapshot.P2PEnabled,
+		snapshot.P2PRunning,
+		snapshot.P2PPort,
+		snapshot.FallbackToCloud,
 		compactPath(m.svc.Root()),
 	))
 }
@@ -786,6 +933,34 @@ func (m *MobileApp) updateSelectedTaskSummary() {
 	))
 	m.selectedTaskProgress.SetValue(progress)
 	m.selectedTaskProgress.Show()
+}
+
+func (m *MobileApp) updateSelectedTransferSummary() {
+	if m.selectedTransfer < 0 || m.selectedTransfer >= len(m.transfers) {
+		m.selectedTransferLabel.SetText("请选择一条 V2 传输任务查看 P2P/cloud 路径和失败原因。")
+		return
+	}
+
+	task := m.transfers[m.selectedTransfer]
+	m.selectedTransferLabel.SetText(fmt.Sprintf(
+		"当前传输：%s\n传输ID: %s\n设备：%s -> %s\n路径：%s/%s\n状态：%s\n失败原因：%s %s",
+		task.FileName,
+		shortID(task.TransferID),
+		shortID(task.SourceDeviceID),
+		shortID(task.TargetDeviceID),
+		emptyAs(task.PreferredRoute, "-"),
+		emptyAs(task.ActualRoute, "-"),
+		taskStatusText(task.Status),
+		emptyAs(task.ErrorCode, "-"),
+		emptyAs(task.ErrorMessage, ""),
+	))
+}
+
+func (m *MobileApp) selectedRemoteDevice() (device.RemoteDevice, error) {
+	if m.selectedDevice < 0 || m.selectedDevice >= len(m.devices) {
+		return device.RemoteDevice{}, errors.New("请先在设备列表中选中目标在线设备")
+	}
+	return m.devices[m.selectedDevice], nil
 }
 
 func (m *MobileApp) selectedRemoteFile() (transfer.RemoteFile, error) {
@@ -860,7 +1035,7 @@ func (m *MobileApp) markRefreshed() {
 }
 
 func formatDeviceItem(item device.RemoteDevice) string {
-	return fmt.Sprintf("%s\nID: %s\n类型: %s | 状态: %s | 最近在线: %s", item.DeviceName, shortID(item.DeviceID), item.DeviceType, item.Status, emptyAs(item.LastSeenAt, "-"))
+	return fmt.Sprintf("%s\nID: %s\n类型: %s | 状态: %s | P2P: %t %s:%d | 最近在线: %s", item.DeviceName, shortID(item.DeviceID), item.DeviceType, item.Status, item.P2PEnabled, emptyAs(item.P2PProtocol, "http"), item.P2PPort, emptyAs(item.LastSeenAt, "-"))
 }
 
 func formatFileItem(item transfer.RemoteFile) string {
@@ -869,6 +1044,10 @@ func formatFileItem(item transfer.RemoteFile) string {
 
 func formatTaskItem(item transfer.RemoteTask) string {
 	return fmt.Sprintf("%s\n上传ID: %s\n文件ID: %s | 进度: %d/%d | 状态: %s", item.FileName, shortID(item.UploadID), shortID(item.FileID), item.UploadedChunks, item.TotalChunks, taskStatusText(item.Status))
+}
+
+func formatTransferItem(item transfer.TransferTask) string {
+	return fmt.Sprintf("%s\n传输ID: %s\n设备: %s -> %s | 路径: %s/%s | 状态: %s | 错误: %s", item.FileName, shortID(item.TransferID), shortID(item.SourceDeviceID), shortID(item.TargetDeviceID), emptyAs(item.PreferredRoute, "-"), emptyAs(item.ActualRoute, "-"), taskStatusText(item.Status), emptyAs(item.ErrorCode, "-"))
 }
 
 func applyListHeight(list *widget.List, count int, height float32) {
