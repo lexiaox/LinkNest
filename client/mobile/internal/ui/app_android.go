@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"linknest/client/internal/appsvc"
@@ -19,7 +20,6 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -28,6 +28,8 @@ const (
 	mobileDeviceHeight   = 84
 	mobileFileHeight     = 72
 	mobileTaskHeight     = 92
+	systemDownloadDir    = "/storage/emulated/0/Download"
+	legacyDownloadDir    = "/sdcard/Download"
 )
 
 type MobileApp struct {
@@ -55,12 +57,16 @@ type MobileApp struct {
 	files        []transfer.RemoteFile
 	selectedFile int
 	fileList     *widget.List
+	downloadHint *widget.Label
 
 	tasks                []transfer.RemoteTask
 	selectedTask         int
 	taskList             *widget.List
 	selectedTaskLabel    *widget.Label
 	selectedTaskProgress *widget.ProgressBar
+
+	downloadDirOnce  sync.Once
+	cachedDownloadDir string
 
 	autoRefreshStopCh chan struct{}
 }
@@ -88,6 +94,7 @@ func Launch() error {
 		gui.svc.StopHeartbeat()
 		gui.window.Close()
 	})
+	gui.initDownloadDir()
 	gui.refreshSnapshot()
 	gui.preloadDataIfReady()
 	gui.startAutoRefresh()
@@ -402,6 +409,7 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 			return m.svc.Download(file.FileID, path)
 		}, func() {
 			m.setStatus(fmt.Sprintf("下载完成：%s -> %s", file.FileName, path))
+			m.setDownloadHint(path)
 		})
 	})
 
@@ -438,12 +446,14 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 		}, m.window)
 	})
 
+	m.downloadHint = wrappingLabel("下载保存位置：系统 Downloads（可能为 /storage/emulated/0/Download 或 /sdcard/Download）。如果系统拒绝写入，会自动回退到应用沙箱 Documents。")
+
 	controls := container.NewVBox(
 		refreshButton,
 		uploadButton,
 		downloadButton,
 		deleteButton,
-		widget.NewCard("说明", "", wrappingLabel("Android 下载会默认保存到应用沙箱的 Documents 目录。")),
+		m.downloadHint,
 		widget.NewSeparator(),
 	)
 	return container.NewBorder(controls, nil, nil, nil, m.fileList)
@@ -523,15 +533,25 @@ func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
 	return container.NewBorder(controls, nil, nil, nil, m.taskList)
 }
 
+func (m *MobileApp) initDownloadDir() {
+	m.downloadDirOnce.Do(func() {
+		if dir, ok := writableDownloadDir(); ok {
+			m.cachedDownloadDir = dir
+		}
+	})
+}
+
 func (m *MobileApp) defaultDownloadPath(fileName string) (string, error) {
-	docURI, err := storage.Child(m.app.Storage().RootURI(), "Documents")
-	if err != nil {
+	name := safeFileName(fileName)
+	if m.cachedDownloadDir != "" {
+		return filepath.Join(m.cachedDownloadDir, name), nil
+	}
+
+	dir := filepath.Join(m.svc.Root(), "Documents")
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(docURI.Path(), 0755); err != nil {
-		return "", err
-	}
-	return filepath.Join(docURI.Path(), fileName), nil
+	return filepath.Join(dir, name), nil
 }
 
 func (m *MobileApp) persistUploadSelection(reader fyne.URIReadCloser) (string, error) {
@@ -869,6 +889,66 @@ func emptyAs(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func safeFileName(value string) string {
+	name := filepath.Base(strings.TrimSpace(value))
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return fmt.Sprintf("linknest-download-%d", time.Now().UnixNano())
+	}
+	return name
+}
+
+func writableDownloadDir() (string, bool) {
+	for _, dir := range []string{systemDownloadDir, legacyDownloadDir} {
+		if canWriteDir(dir) {
+			return dir, true
+		}
+	}
+	return "", false
+}
+
+func canWriteDir(dir string) bool {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return false
+	}
+
+	probe, err := os.CreateTemp(dir, ".linknest-write-test-*")
+	if err != nil {
+		return false
+	}
+	name := probe.Name()
+	closeErr := probe.Close()
+	removeErr := os.Remove(name)
+	if closeErr != nil || removeErr != nil {
+		return false
+	}
+	return true
+}
+
+func (m *MobileApp) setDownloadHint(path string) {
+	if m.downloadHint == nil {
+		return
+	}
+	if isPathInDir(path, systemDownloadDir) || isPathInDir(path, legacyDownloadDir) {
+		m.downloadHint.SetText("最近下载位置：系统 Downloads\n" + path)
+		return
+	}
+	m.downloadHint.SetText("最近下载位置：应用沙箱 Documents（系统拒绝写入公共 Downloads）\n" + path)
+}
+
+func isPathInDir(path string, dir string) bool {
+	cleanPath := filepath.Clean(strings.TrimSpace(path))
+	cleanDir := filepath.Clean(strings.TrimSpace(dir))
+	if cleanPath == cleanDir {
+		return true
+	}
+
+	rel, err := filepath.Rel(cleanDir, cleanPath)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func accountField(labelText string, input fyne.CanvasObject) fyne.CanvasObject {
