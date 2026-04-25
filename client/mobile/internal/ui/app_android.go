@@ -99,6 +99,9 @@ func (m *MobileApp) buildContent() fyne.CanvasObject {
 	snapshot := m.svc.Snapshot()
 
 	m.serverEntry = widget.NewEntry()
+	m.serverEntry.MultiLine = true
+	m.serverEntry.Wrapping = fyne.TextWrapBreak
+	m.serverEntry.SetMinRowsVisible(1)
 	m.serverEntry.SetText(snapshot.ServerURL)
 
 	m.usernameEntry = widget.NewEntry()
@@ -117,19 +120,19 @@ func (m *MobileApp) buildContent() fyne.CanvasObject {
 	m.deviceType.SetText("android")
 
 	m.statusLabel = widget.NewLabel("就绪。")
-	m.statusLabel.Wrapping = fyne.TextWrapWord
+	m.statusLabel.Wrapping = fyne.TextWrapBreak
 
 	m.activityLabel = widget.NewLabel("后台当前没有正在执行的操作。")
-	m.activityLabel.Wrapping = fyne.TextWrapWord
+	m.activityLabel.Wrapping = fyne.TextWrapBreak
 
 	m.lastRefreshLabel = widget.NewLabel("最近自动刷新：尚未开始")
-	m.lastRefreshLabel.Wrapping = fyne.TextWrapWord
+	m.lastRefreshLabel.Wrapping = fyne.TextWrapBreak
 
 	m.busyBar = widget.NewProgressBarInfinite()
 	m.busyBar.Hide()
 
 	m.snapshotLabel = widget.NewLabel("")
-	m.snapshotLabel.Wrapping = fyne.TextWrapWord
+	m.snapshotLabel.Wrapping = fyne.TextWrapBreak
 
 	tabs := container.NewAppTabs(
 		container.NewTabItem("账号", m.buildAccountTab()),
@@ -139,23 +142,18 @@ func (m *MobileApp) buildContent() fyne.CanvasObject {
 	)
 	tabs.SetTabLocation(container.TabLocationBottom)
 
+	introLabel := widget.NewLabel("移动端直接复用现有 Go 客户端模块，并把本地配置保存在应用沙箱里。")
+	introLabel.Wrapping = fyne.TextWrapBreak
+
 	header := container.NewVBox(
 		widget.NewLabelWithStyle("LinkNest Android GUI", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		widget.NewLabel("移动端直接复用现有 Go 客户端模块，并把本地配置保存在应用沙箱里。"),
+		introLabel,
 		m.snapshotLabel,
 	)
 
-	footer := container.NewVBox(
-		widget.NewSeparator(),
-		m.activityLabel,
-		m.busyBar,
-		m.lastRefreshLabel,
-		m.statusLabel,
-	)
-
 	return container.NewBorder(
-		container.NewVBox(header, widget.NewSeparator()),
-		footer,
+		container.NewVBox(header, widget.NewSeparator(), m.busyBar, m.statusLabel, widget.NewSeparator()),
+		nil,
 		nil,
 		nil,
 		tabs,
@@ -235,18 +233,16 @@ func (m *MobileApp) buildAccountTab() fyne.CanvasObject {
 		}, m.window)
 	})
 
-	return container.NewVScroll(container.NewVBox(
-		widget.NewForm(
-			widget.NewFormItem("服务器地址", m.serverEntry),
-			widget.NewFormItem("用户名", m.usernameEntry),
-			widget.NewFormItem("邮箱", m.emailEntry),
-			widget.NewFormItem("密码", m.passwordEntry),
-		),
+	return container.NewVScroll(mobileStack(
+		accountField("服务器", m.serverEntry),
+		accountField("用户名", m.usernameEntry),
+		accountField("邮箱", m.emailEntry),
+		accountField("密码", m.passwordEntry),
 		saveServerButton,
 		loginButton,
 		registerButton,
 		deleteButton,
-		widget.NewCard("说明", "", widget.NewLabel("推荐流程：先保存服务器地址，再登录或注册；如果你要正式绑定这台手机，请到“设备”页点击“绑定当前设备”。")),
+		wrappingLabel("先保存服务器地址，再登录或注册。正式绑定这台手机请到“设备”页点击“绑定当前设备”。"),
 	))
 }
 
@@ -255,7 +251,7 @@ func (m *MobileApp) buildDeviceTab() fyne.CanvasObject {
 		func() int { return len(m.devices) },
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("")
-			label.Wrapping = fyne.TextWrapWord
+			label.Wrapping = fyne.TextWrapBreak
 			return label
 		},
 		func(id widget.ListItemID, item fyne.CanvasObject) {
@@ -310,7 +306,7 @@ func (m *MobileApp) buildDeviceTab() fyne.CanvasObject {
 		m.refreshSnapshot()
 	})
 
-	content := container.NewVBox(
+	controls := container.NewVBox(
 		widget.NewForm(
 			widget.NewFormItem("设备名", m.deviceName),
 			widget.NewFormItem("设备类型", m.deviceType),
@@ -320,9 +316,8 @@ func (m *MobileApp) buildDeviceTab() fyne.CanvasObject {
 		startButton,
 		stopButton,
 		widget.NewSeparator(),
-		m.deviceList,
 	)
-	return container.NewBorder(nil, nil, nil, nil, content)
+	return container.NewBorder(controls, nil, nil, nil, m.deviceList)
 }
 
 func (m *MobileApp) buildFileTab() fyne.CanvasObject {
@@ -330,7 +325,7 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 		func() int { return len(m.files) },
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("")
-			label.Wrapping = fyne.TextWrapWord
+			label.Wrapping = fyne.TextWrapBreak
 			return label
 		},
 		func(id widget.ListItemID, item fyne.CanvasObject) {
@@ -443,16 +438,15 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 		}, m.window)
 	})
 
-	content := container.NewVBox(
+	controls := container.NewVBox(
 		refreshButton,
 		uploadButton,
 		downloadButton,
 		deleteButton,
-		widget.NewCard("说明", "", widget.NewLabel("Android 下载会默认保存到应用沙箱的 Documents 目录。")),
+		widget.NewCard("说明", "", wrappingLabel("Android 下载会默认保存到应用沙箱的 Documents 目录。")),
 		widget.NewSeparator(),
-		m.fileList,
 	)
-	return container.NewBorder(nil, nil, nil, nil, content)
+	return container.NewBorder(controls, nil, nil, nil, m.fileList)
 }
 
 func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
@@ -460,7 +454,7 @@ func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
 		func() int { return len(m.tasks) },
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("")
-			label.Wrapping = fyne.TextWrapWord
+			label.Wrapping = fyne.TextWrapBreak
 			return label
 		},
 		func(id widget.ListItemID, item fyne.CanvasObject) {
@@ -473,7 +467,7 @@ func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
 	}
 
 	m.selectedTaskLabel = widget.NewLabel("请选择一条上传任务查看详情。这里显示的是每次文件上传或续传的记录。")
-	m.selectedTaskLabel.Wrapping = fyne.TextWrapWord
+	m.selectedTaskLabel.Wrapping = fyne.TextWrapBreak
 
 	m.selectedTaskProgress = widget.NewProgressBar()
 	m.selectedTaskProgress.Min = 0
@@ -519,15 +513,14 @@ func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
 		})
 	})
 
-	content := container.NewVBox(
+	controls := container.NewVBox(
 		m.selectedTaskLabel,
 		m.selectedTaskProgress,
 		refreshButton,
 		resumeButton,
 		widget.NewSeparator(),
-		m.taskList,
 	)
-	return container.NewBorder(nil, nil, nil, nil, content)
+	return container.NewBorder(controls, nil, nil, nil, m.taskList)
 }
 
 func (m *MobileApp) defaultDownloadPath(fileName string) (string, error) {
@@ -729,7 +722,7 @@ func (m *MobileApp) refreshSnapshot() {
 
 	deviceText := "未绑定"
 	if strings.TrimSpace(snapshot.DeviceID) != "" {
-		deviceText = fmt.Sprintf("%s (%s)", snapshot.DeviceName, snapshot.DeviceID)
+		deviceText = fmt.Sprintf("%s (%s)", snapshot.DeviceName, shortID(snapshot.DeviceID))
 	}
 
 	heartbeatText := "未运行"
@@ -741,12 +734,12 @@ func (m *MobileApp) refreshSnapshot() {
 	}
 
 	m.snapshotLabel.SetText(fmt.Sprintf(
-		"服务器：%s\n登录状态：%s\n当前设备：%s\n在线心跳：%s\n本地配置目录：%s",
+		"服务器：%s\n登录状态：%s\n当前设备：%s\n在线心跳：%s\n本地目录：%s",
 		emptyAs(snapshot.ServerURL, "未设置"),
 		tokenText,
 		deviceText,
 		heartbeatText,
-		m.svc.Root(),
+		compactPath(m.svc.Root()),
 	))
 }
 
@@ -766,7 +759,7 @@ func (m *MobileApp) updateSelectedTaskSummary() {
 	m.selectedTaskLabel.SetText(fmt.Sprintf(
 		"当前上传任务：%s\n上传ID: %s\n进度：%d / %d | 状态：%s",
 		task.FileName,
-		task.UploadID,
+		shortID(task.UploadID),
 		task.UploadedChunks,
 		task.TotalChunks,
 		taskStatusText(task.Status),
@@ -810,6 +803,7 @@ func (m *MobileApp) runAsync(activity string, work func() error, onSuccess func(
 
 func (m *MobileApp) startBusy(activity string) {
 	m.activityLabel.SetText(activity)
+	m.statusLabel.SetText(activity)
 	m.busyBar.Show()
 	m.busyBar.Start()
 }
@@ -846,15 +840,15 @@ func (m *MobileApp) markRefreshed() {
 }
 
 func formatDeviceItem(item device.RemoteDevice) string {
-	return fmt.Sprintf("%s\nID: %s\n类型: %s | 状态: %s | 最近在线: %s", item.DeviceName, item.DeviceID, item.DeviceType, item.Status, emptyAs(item.LastSeenAt, "-"))
+	return fmt.Sprintf("%s\nID: %s\n类型: %s | 状态: %s | 最近在线: %s", item.DeviceName, shortID(item.DeviceID), item.DeviceType, item.Status, emptyAs(item.LastSeenAt, "-"))
 }
 
 func formatFileItem(item transfer.RemoteFile) string {
-	return fmt.Sprintf("%s\nID: %s\n大小: %d 字节 | 状态: %s", item.FileName, item.FileID, item.FileSize, item.Status)
+	return fmt.Sprintf("%s\nID: %s\n大小: %d 字节 | 状态: %s", item.FileName, shortID(item.FileID), item.FileSize, item.Status)
 }
 
 func formatTaskItem(item transfer.RemoteTask) string {
-	return fmt.Sprintf("%s\n上传ID: %s\n文件ID: %s | 进度: %d/%d | 状态: %s", item.FileName, item.UploadID, item.FileID, item.UploadedChunks, item.TotalChunks, taskStatusText(item.Status))
+	return fmt.Sprintf("%s\n上传ID: %s\n文件ID: %s | 进度: %d/%d | 状态: %s", item.FileName, shortID(item.UploadID), shortID(item.FileID), item.UploadedChunks, item.TotalChunks, taskStatusText(item.Status))
 }
 
 func applyListHeight(list *widget.List, count int, height float32) {
@@ -877,8 +871,80 @@ func emptyAs(value string, fallback string) string {
 	return value
 }
 
+func accountField(labelText string, input fyne.CanvasObject) fyne.CanvasObject {
+	return mobileStack(wrappingLabel(labelText), input)
+}
+
+func mobileStack(objects ...fyne.CanvasObject) *fyne.Container {
+	return container.New(&mobileStackLayout{gap: 8}, objects...)
+}
+
+type mobileStackLayout struct {
+	gap float32
+}
+
+func (l *mobileStackLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	y := float32(0)
+	for _, object := range objects {
+		if !object.Visible() {
+			continue
+		}
+		height := object.MinSize().Height
+		object.Move(fyne.NewPos(0, y))
+		object.Resize(fyne.NewSize(size.Width, height))
+		y += height + l.gap
+	}
+}
+
+func (l *mobileStackLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	height := float32(0)
+	visible := 0
+	for _, object := range objects {
+		if !object.Visible() {
+			continue
+		}
+		height += object.MinSize().Height
+		visible++
+	}
+	if visible > 1 {
+		height += float32(visible-1) * l.gap
+	}
+	return fyne.NewSize(1, height)
+}
+
+func wrappingLabel(text string) *widget.Label {
+	label := widget.NewLabel(text)
+	label.Wrapping = fyne.TextWrapBreak
+	return label
+}
+
+func shortID(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 18 {
+		return emptyAs(value, "-")
+	}
+	return value[:8] + "..." + value[len(value)-6:]
+}
+
+func compactPath(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 36 {
+		return emptyAs(value, "-")
+	}
+
+	base := filepath.Base(value)
+	parent := filepath.Base(filepath.Dir(value))
+	if base == "." || base == string(filepath.Separator) {
+		return value
+	}
+	if parent == "." || parent == string(filepath.Separator) {
+		return "..." + string(filepath.Separator) + base
+	}
+	return "..." + string(filepath.Separator) + filepath.Join(parent, base)
+}
+
 func taskStatusText(status string) string {
-	switch strings.TrimSpace(status) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "initialized":
 		return "已初始化"
 	case "uploading":
