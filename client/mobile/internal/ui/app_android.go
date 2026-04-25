@@ -441,7 +441,7 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 		}, m.window)
 	})
 
-	m.downloadHint = wrappingLabel("下载保存位置：系统 Downloads（/storage/emulated/0/Download）。如果系统拒绝写入，会自动回退到应用沙箱 Documents。")
+	m.downloadHint = wrappingLabel("下载保存位置：系统 Downloads（可能为 /storage/emulated/0/Download 或 /sdcard/Download）。如果系统拒绝写入，会自动回退到应用沙箱 Documents。")
 
 	controls := container.NewVBox(
 		refreshButton,
@@ -880,7 +880,7 @@ func emptyAs(value string, fallback string) string {
 
 func safeFileName(value string) string {
 	name := filepath.Base(strings.TrimSpace(value))
-	if name == "." || name == string(filepath.Separator) || name == "" {
+	if name == "." || name == ".." || name == string(filepath.Separator) || name == "" {
 		return fmt.Sprintf("linknest-download-%d", time.Now().UnixNano())
 	}
 	return name
@@ -895,7 +895,7 @@ func writableDownloadDir() (string, bool) {
 	return "", false
 }
 
-func canWriteDir(dir string) bool {
+func canWriteDir(dir string) (ok bool) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return false
 	}
@@ -905,8 +905,13 @@ func canWriteDir(dir string) bool {
 		return false
 	}
 	name := probe.Name()
-	_ = probe.Close()
-	_ = os.Remove(name)
+	defer func() {
+		closeErr := probe.Close()
+		removeErr := os.Remove(name)
+		if closeErr != nil || removeErr != nil {
+			ok = false
+		}
+	}()
 	return true
 }
 
@@ -914,11 +919,25 @@ func (m *MobileApp) setDownloadHint(path string) {
 	if m.downloadHint == nil {
 		return
 	}
-	if strings.HasPrefix(path, systemDownloadDir) || strings.HasPrefix(path, legacyDownloadDir) {
+	if isPathInDir(path, systemDownloadDir) || isPathInDir(path, legacyDownloadDir) {
 		m.downloadHint.SetText("最近下载位置：系统 Downloads\n" + path)
 		return
 	}
 	m.downloadHint.SetText("最近下载位置：应用沙箱 Documents（系统拒绝写入公共 Downloads）\n" + path)
+}
+
+func isPathInDir(path string, dir string) bool {
+	cleanPath := filepath.Clean(strings.TrimSpace(path))
+	cleanDir := filepath.Clean(strings.TrimSpace(dir))
+	if cleanPath == cleanDir {
+		return true
+	}
+
+	rel, err := filepath.Rel(cleanDir, cleanPath)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func accountField(labelText string, input fyne.CanvasObject) fyne.CanvasObject {

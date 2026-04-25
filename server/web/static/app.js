@@ -508,7 +508,7 @@ async function setupDevicesPage() {
 
 function renderDevicesTable(items) {
   if (!items.length) {
-    return `<div class="empty-state">当前没有在线设备。请在设备上启动 CLI online，或打开 Windows / Android 客户端在线心跳。</div>`;
+    return `<div class="empty-state">当前没有在线设备。请在设备上运行 <code>linknest online</code>，或打开 Windows / Android 客户端在线心跳。</div>`;
   }
   return `
     <table>
