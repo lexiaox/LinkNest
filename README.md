@@ -1,6 +1,6 @@
 # LinkNest
 
-LinkNest 是一个可运行的多端文件传输原型，提供服务端、Web UI、CLI、Windows 桌面端和 Docker 部署方式。你可以把它部署到自己的服务器上，然后通过浏览器、CLI 或 Windows GUI 登录同一个账号、绑定设备、上传文件、下载文件、删除文件、查看任务状态，以及在不再需要时注销账号并清理自己的数据。
+LinkNest 是一个可运行的多端文件传输原型，提供服务端、Web UI、CLI、Windows 桌面端、Android 移动端和 Docker 部署方式。你可以把它部署到自己的服务器上，然后通过浏览器、CLI、Windows GUI 或 Android GUI 登录同一个账号、绑定设备、上传文件、下载文件、删除文件、查看任务状态，以及在不再需要时注销账号并清理自己的数据。
 
 ## 我能用它做什么
 
@@ -8,6 +8,7 @@ LinkNest 是一个可运行的多端文件传输原型，提供服务端、Web U
 - 用浏览器登录账号，查看设备、文件和任务
 - 用 CLI 把当前电脑绑定成一个设备并保持在线
 - 在 Windows 桌面端里完成登录、绑定设备、文件管理和上传任务查看
+- 在 Android 移动端里完成登录、绑定设备、文件管理和上传任务查看
 - 上传大文件、断点续传、补传缺失分片
 - 在其他设备上查看文件、下载文件和删除文件
 - 注销测试账号或不再使用的账号，清理对应的设备、文件和上传记录
@@ -115,6 +116,31 @@ http://<server>:8080/login
 mkdir -p ./bin
 go build -o ./bin/linknest-desktop.exe ./client/desktop/cmd/linknest-desktop
 ```
+
+## 作为 Android 用户怎么使用移动端
+
+Android GUI 使用底部页签和手机单列布局。账号页使用短标签竖向表单，长 URL、ID、路径和文件名会自动换行或缩短展示，状态信息显示在内容顶部，避免挤占底部页签和中间列表区域。
+
+### 自己构建 Android 安装包
+
+需要：
+
+- Go
+- Android SDK
+- `fyne` 打包工具
+
+推荐命令：
+
+```bash
+cd ./client/mobile/cmd/linknest-mobile
+fyne package -os android -app-id top.ledouya.linknest.mobile -name LinkNestMobile
+```
+
+### iPhone / iPad 能不能做
+
+- 可以共用同一套 Fyne / Go 移动端代码
+- 但最终 iOS 构建、签名和上架必须在 macOS + Xcode 环境完成
+- 所以当前这一步先落 Android，后续如果你有 macOS 环境，再补 iOS 打包链路
 
 ## 作为 CLI 用户怎么绑定设备和保持在线
 
@@ -234,6 +260,7 @@ go run ./client/cmd/linknest auth delete --password <当前密码>
 
 - `client/`：CLI 客户端代码和模块说明
 - `client/desktop/`：Windows 桌面端代码和构建说明
+- `client/mobile/`：Android 移动端代码和构建说明
 - `server/`：服务端代码、迁移脚本和 Web 资源
 - `deploy/`：本地和 Docker 配置模板
 - `docs/api.md`：API 说明

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"linknest/client/desktop/internal/appsvc"
+	"linknest/client/internal/appsvc"
 	"linknest/client/internal/device"
 	"linknest/client/internal/transfer"
 
