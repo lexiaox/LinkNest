@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"linknest/client/internal/appsvc"
@@ -64,6 +65,9 @@ type MobileApp struct {
 	selectedTaskLabel    *widget.Label
 	selectedTaskProgress *widget.ProgressBar
 
+	downloadDirOnce  sync.Once
+	cachedDownloadDir string
+
 	autoRefreshStopCh chan struct{}
 }
 
@@ -90,6 +94,7 @@ func Launch() error {
 		gui.svc.StopHeartbeat()
 		gui.window.Close()
 	})
+	gui.initDownloadDir()
 	gui.refreshSnapshot()
 	gui.preloadDataIfReady()
 	gui.startAutoRefresh()
@@ -528,10 +533,18 @@ func (m *MobileApp) buildTaskTab() fyne.CanvasObject {
 	return container.NewBorder(controls, nil, nil, nil, m.taskList)
 }
 
+func (m *MobileApp) initDownloadDir() {
+	m.downloadDirOnce.Do(func() {
+		if dir, ok := writableDownloadDir(); ok {
+			m.cachedDownloadDir = dir
+		}
+	})
+}
+
 func (m *MobileApp) defaultDownloadPath(fileName string) (string, error) {
 	name := safeFileName(fileName)
-	if dir, ok := writableDownloadDir(); ok {
-		return filepath.Join(dir, name), nil
+	if m.cachedDownloadDir != "" {
+		return filepath.Join(m.cachedDownloadDir, name), nil
 	}
 
 	dir := filepath.Join(m.svc.Root(), "Documents")

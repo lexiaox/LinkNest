@@ -6,6 +6,8 @@
 
 文件下载优先写入系统公共 Downloads 目录：`/storage/emulated/0/Download`，旧设备会尝试 `/sdcard/Download`。如果系统权限或厂商 ROM 拒绝写入公共目录，才回退到应用沙箱 `Documents` 目录，并在文件页提示实际保存路径。
 
+文件下载优先写入系统公共 Downloads 目录：`/storage/emulated/0/Download`，旧设备会尝试 `/sdcard/Download`。如果系统权限或厂商 ROM 拒绝写入公共目录，才回退到应用沙箱 `Documents` 目录，并在文件页提示实际保存路径。
+
 目录结构：
 
 - `app_android.go`：Android GUI 的窗口、页签和交互逻辑。
