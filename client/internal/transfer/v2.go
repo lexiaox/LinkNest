@@ -196,6 +196,7 @@ func Send(root string, cfg clientconfig.ClientConfig, localPath string, targetDe
 				fmt.Printf("transfer completed route=p2p transfer_id=%s\n", initResp.TransferID)
 				return nil
 			} else if !clientconfig.FallbackToCloudEnabled(cfg.Transfer) {
+				_ = markTransferFailed(cfg, initResp.TransferID, "P2P_TRANSFER_FAILED", err.Error())
 				return fmt.Errorf("p2p transfer failed and cloud fallback is disabled: %w", err)
 			} else {
 				_, _ = fallbackTransfer(cfg, initResp.TransferID, "P2P_TRANSFER_INTERRUPTED", err.Error())
@@ -292,6 +293,7 @@ func ResumeTransfer(root string, cfg clientconfig.ClientConfig, transferID strin
 				fmt.Printf("transfer resumed route=p2p transfer_id=%s\n", task.TransferID)
 				return nil
 			} else if !clientconfig.FallbackToCloudEnabled(cfg.Transfer) {
+				_ = markTransferFailed(cfg, task.TransferID, "P2P_TRANSFER_FAILED", err.Error())
 				return fmt.Errorf("p2p transfer failed and cloud fallback is disabled: %w", err)
 			} else {
 				_, _ = fallbackTransfer(cfg, task.TransferID, "P2P_TRANSFER_INTERRUPTED", err.Error())
@@ -493,6 +495,14 @@ func newP2PRequest(method string, url string, token string, body *bytes.Reader, 
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return req, nil
+}
+
+func markTransferFailed(cfg clientconfig.ClientConfig, transferID string, errorCode string, errorMessage string) error {
+	var result TransferTask
+	return doJSON(http.MethodPost, strings.TrimRight(cfg.ServerURL, "/")+"/api/transfers/"+strings.TrimSpace(transferID)+"/mark-failed", cfg.Token, map[string]string{
+		"error_code":    errorCode,
+		"error_message": errorMessage,
+	}, &result)
 }
 
 func reportProbeResult(cfg clientconfig.ClientConfig, transferID string, payload probeResultRequest) error {

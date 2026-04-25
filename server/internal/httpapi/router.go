@@ -452,6 +452,22 @@ func handleTransferRoutes(service *servertransfer.Service) http.HandlerFunc {
 			}
 			response.JSON(w, http.StatusOK, result)
 			return
+		case r.Method == http.MethodPost && action == "mark-failed":
+			var input struct {
+				ErrorCode    string `json:"error_code"`
+				ErrorMessage string `json:"error_message"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				response.Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+				return
+			}
+			task, err := service.MarkFailed(r.Context(), user.ID, transferID, input.ErrorCode, input.ErrorMessage)
+			if err != nil {
+				handleTransferError(w, err)
+				return
+			}
+			response.JSON(w, http.StatusOK, task)
+			return
 		default:
 			http.NotFound(w, r)
 			return

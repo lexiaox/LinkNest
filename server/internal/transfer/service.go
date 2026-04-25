@@ -139,6 +139,7 @@ type ValidateTokenResult struct {
 	FileHash       string `json:"file_hash"`
 	ChunkSize      int64  `json:"chunk_size"`
 	TotalChunks    int    `json:"total_chunks"`
+	ExpiresAt      string `json:"expires_at,omitempty"`
 	Valid          bool   `json:"valid"`
 }
 
@@ -280,9 +281,9 @@ WHERE user_id = ? AND transfer_id = ?
 
 	if _, err := s.db.ExecContext(ctx, `
 UPDATE transfer_tasks
-SET status = ?, actual_route = ?, error_code = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+SET status = ?, actual_route = NULL, error_code = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
 WHERE user_id = ? AND transfer_id = ?
-`, StatusFallbackUploading, RouteCloud, strings.TrimSpace(input.ErrorCode), strings.TrimSpace(input.ErrorMessage), userID, task.TransferID); err != nil {
+`, StatusFailed, strings.TrimSpace(input.ErrorCode), strings.TrimSpace(input.ErrorMessage), userID, task.TransferID); err != nil {
 		return Task{}, fmt.Errorf("update probe failure: %w", err)
 	}
 	return s.Get(ctx, userID, transferID)
@@ -333,6 +334,20 @@ WHERE user_id = ? AND transfer_id = ?
 	}, nil
 }
 
+func (s *Service) MarkFailed(ctx context.Context, userID int64, transferID string, errorCode string, errorMessage string) (Task, error) {
+	if _, err := s.Get(ctx, userID, transferID); err != nil {
+		return Task{}, err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE transfer_tasks
+SET status = ?, error_code = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+WHERE user_id = ? AND transfer_id = ?
+`, StatusFailed, strings.TrimSpace(errorCode), strings.TrimSpace(errorMessage), userID, strings.TrimSpace(transferID)); err != nil {
+		return Task{}, fmt.Errorf("mark transfer failed: %w", err)
+	}
+	return s.Get(ctx, userID, transferID)
+}
+
 func (s *Service) ValidateToken(ctx context.Context, userID int64, input ValidateTokenInput) (ValidateTokenResult, error) {
 	claims, err := s.tokens.Parse(input.TransferToken)
 	if err != nil {
@@ -347,6 +362,10 @@ func (s *Service) ValidateToken(ctx context.Context, userID int64, input Validat
 	if _, err := s.device.GetByDeviceID(ctx, userID, claims.TargetDeviceID); err != nil {
 		return ValidateTokenResult{}, ErrInvalidToken
 	}
+	var expiresAt string
+	if claims.ExpiresAt != nil {
+		expiresAt = claims.ExpiresAt.Time.Format(time.RFC3339)
+	}
 	return ValidateTokenResult{
 		TransferID:     claims.TransferID,
 		SourceDeviceID: claims.SourceDeviceID,
@@ -356,6 +375,7 @@ func (s *Service) ValidateToken(ctx context.Context, userID int64, input Validat
 		FileHash:       claims.FileHash,
 		ChunkSize:      claims.ChunkSize,
 		TotalChunks:    claims.TotalChunks,
+		ExpiresAt:      expiresAt,
 		Valid:          true,
 	}, nil
 }

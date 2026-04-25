@@ -556,6 +556,9 @@ function renderDevicesTable(items) {
 }
 
 function candidateLabel(item) {
+  if (!item.p2p_enabled) {
+    return "-";
+  }
   const candidates = [];
   if (item.lan_ip && Number(item.p2p_port || 0) > 0) {
     candidates.push("LAN");

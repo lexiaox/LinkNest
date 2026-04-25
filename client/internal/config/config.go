@@ -32,7 +32,6 @@ type TransferConfig struct {
 	P2PPort                  int    `yaml:"p2p_port"`
 	P2PConnectTimeoutSeconds int    `yaml:"p2p_connect_timeout_seconds"`
 	P2PChunkTimeoutSeconds   int    `yaml:"p2p_chunk_timeout_seconds"`
-	P2PMaxRetries            int    `yaml:"p2p_max_retries"`
 	FallbackToCloud          *bool  `yaml:"fallback_to_cloud"`
 	InboxDir                 string `yaml:"inbox_dir"`
 	VirtualIP                string `yaml:"virtual_ip"`
@@ -112,7 +111,6 @@ func Default() ClientConfig {
 			P2PPort:                  19090,
 			P2PConnectTimeoutSeconds: 5,
 			P2PChunkTimeoutSeconds:   30,
-			P2PMaxRetries:            2,
 			FallbackToCloud:          boolPtr(true),
 		},
 	}
@@ -133,9 +131,6 @@ func normalizeTransferConfig(root string, cfg *TransferConfig) {
 	}
 	if cfg.P2PChunkTimeoutSeconds <= 0 {
 		cfg.P2PChunkTimeoutSeconds = 30
-	}
-	if cfg.P2PMaxRetries < 0 {
-		cfg.P2PMaxRetries = 0
 	}
 	if strings.TrimSpace(cfg.InboxDir) == "" {
 		cfg.InboxDir = filepath.Join(root, "inbox")

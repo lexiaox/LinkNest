@@ -6,8 +6,6 @@
 
 V2 能力通过共享 client service 接入：设备页启动/停止 P2P 服务，文件页选择在线目标设备并发送文件，任务页同时展示 V2 transfer 和 V1 upload task。文件下载优先写入系统公共 Downloads 目录：`/storage/emulated/0/Download`，旧设备会尝试 `/sdcard/Download`。如果系统权限或厂商 ROM 拒绝写入公共目录，才回退到应用沙箱 `Documents` 目录，并在文件页提示实际保存路径。
 
-文件下载优先写入系统公共 Downloads 目录：`/storage/emulated/0/Download`，旧设备会尝试 `/sdcard/Download`。如果系统权限或厂商 ROM 拒绝写入公共目录，才回退到应用沙箱 `Documents` 目录，并在文件页提示实际保存路径。
-
 目录结构：
 
 - `app_android.go`：Android GUI 的窗口、页签和交互逻辑，包含 P2P 服务开关、目标设备发送、V2/V1 任务列表和系统 Downloads 下载路径。

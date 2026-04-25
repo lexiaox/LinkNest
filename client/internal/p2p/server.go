@@ -32,7 +32,7 @@ type Server struct {
 	listener   net.Listener
 	actualPort int
 	mu         sync.Mutex
-	cache      map[string]TokenMetadata
+	cache      map[string]cacheEntry
 }
 
 type TokenMetadata struct {
@@ -44,7 +44,13 @@ type TokenMetadata struct {
 	FileHash       string `json:"file_hash"`
 	ChunkSize      int64  `json:"chunk_size"`
 	TotalChunks    int    `json:"total_chunks"`
+	ExpiresAt      string `json:"expires_at,omitempty"`
 	Valid          bool   `json:"valid"`
+}
+
+type cacheEntry struct {
+	meta      TokenMetadata
+	expiresAt time.Time
 }
 
 type LocalTask struct {
@@ -118,7 +124,7 @@ func Start(root string, cfg clientconfig.ClientConfig, profile device.Profile) (
 		profile:    profile,
 		listener:   listener,
 		actualPort: actualPort,
-		cache:      make(map[string]TokenMetadata),
+		cache:      make(map[string]cacheEntry),
 	}
 
 	mux := http.NewServeMux()
@@ -213,8 +219,14 @@ func (s *Server) handleChunk(w http.ResponseWriter, r *http.Request, transferID 
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, int64(meta.ChunkSize)+1024)
 	raw, err := ioutil.ReadAll(r.Body)
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -307,10 +319,11 @@ func (s *Server) validateRequest(r *http.Request, transferID string) (TokenMetad
 	cacheKey := transferID + ":" + token
 
 	s.mu.Lock()
-	if meta, ok := s.cache[cacheKey]; ok {
+	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
 		s.mu.Unlock()
-		return meta, nil
+		return entry.meta, nil
 	}
+	delete(s.cache, cacheKey)
 	s.mu.Unlock()
 
 	payload := validateTokenRequest{
@@ -326,8 +339,15 @@ func (s *Server) validateRequest(r *http.Request, transferID string) (TokenMetad
 		return TokenMetadata{}, errors.New("transfer token target mismatch")
 	}
 
+	expiresAt := time.Now().Add(time.Hour)
+	if result.ExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
+			expiresAt = t
+		}
+	}
+
 	s.mu.Lock()
-	s.cache[cacheKey] = result
+	s.cache[cacheKey] = cacheEntry{meta: result, expiresAt: expiresAt}
 	s.mu.Unlock()
 	return result, nil
 }
@@ -399,6 +419,8 @@ func (s *Server) saveTask(meta TokenMetadata, received []int, status string, out
 	if err := os.MkdirAll(s.transferDir(meta.TransferID), 0755); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return ioutil.WriteFile(s.taskPath(meta.TransferID), raw, 0644)
 }
 
