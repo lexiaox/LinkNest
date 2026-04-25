@@ -484,16 +484,17 @@ async function setupDevicesPage() {
       }
       const { body } = await apiFetch("/api/devices");
       const items = body.items || [];
-      const onlineCount = items.filter((item) => String(item.status).toLowerCase() === "online").length;
+      const onlineItems = items.filter((item) => String(item.status || "").trim().toLowerCase() === "online");
+      const hiddenCount = items.length - onlineItems.length;
       document.getElementById("devices-summary").innerHTML = renderSummaryCards([
-        { label: "总设备数", value: String(items.length), note: "当前账号下的全部设备记录" },
-        { label: "在线设备", value: String(onlineCount), note: "近一次心跳在离线阈值内" },
-        { label: "离线设备", value: String(items.length - onlineCount), note: "长时间未收到心跳" },
+        { label: "在线设备", value: String(onlineItems.length), note: "当前页面只显示在线设备" },
+        { label: "已隐藏离线", value: String(hiddenCount), note: "离线设备不会出现在列表中" },
+        { label: "设备记录", value: String(items.length), note: "服务端保留的全部设备记录" },
       ]);
-      document.getElementById("devices-table").innerHTML = renderDevicesTable(items);
+      document.getElementById("devices-table").innerHTML = renderDevicesTable(onlineItems);
       setAutoRefreshStatus("devices-auto-status", refreshIntervalMs, new Date());
       if (trigger === "manual" || trigger === "initial") {
-        setMessage(`设备列表已刷新，用户 ${user.username} 当前共有 ${items.length} 台设备。`, "success");
+        setMessage(`在线设备列表已刷新，用户 ${user.username} 当前有 ${onlineItems.length} 台在线设备。`, "success");
       }
     } catch (error) {
       setMessage(error.message, "error");
@@ -507,7 +508,7 @@ async function setupDevicesPage() {
 
 function renderDevicesTable(items) {
   if (!items.length) {
-    return `<div class="empty-state">当前账号下还没有设备记录。先用 CLI 执行 device init / device register。</div>`;
+    return `<div class="empty-state">当前没有在线设备。请在设备上启动 CLI online，或打开 Windows / Android 客户端在线心跳。</div>`;
   }
   return `
     <table>

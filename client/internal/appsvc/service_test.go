@@ -122,6 +122,48 @@ func TestBindCurrentDevicePersistsDeviceConfig(t *testing.T) {
 	}
 }
 
+func TestListDevicesReturnsOnlineOnly(t *testing.T) {
+	root := t.TempDir()
+
+	cfg := clientconfig.Default()
+	cfg.ServerURL = "http://example.com"
+	cfg.Token = "token"
+	if err := clientconfig.EnsureRoot(root); err != nil {
+		t.Fatalf("EnsureRoot() error = %v", err)
+	}
+	if err := clientconfig.Save(root, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	service, err := New(root)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	originalListDevices := listDevices
+	listDevices = func(baseURL string, token string) ([]device.RemoteDevice, error) {
+		return []device.RemoteDevice{
+			{DeviceID: "online-1", Status: "online"},
+			{DeviceID: "offline-1", Status: "offline"},
+			{DeviceID: "online-2", Status: " ONLINE "},
+		}, nil
+	}
+	defer func() {
+		listDevices = originalListDevices
+	}()
+
+	items, err := service.ListDevices()
+	if err != nil {
+		t.Fatalf("ListDevices() error = %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len(ListDevices()) = %d, want 2", len(items))
+	}
+	if items[0].DeviceID != "online-1" || items[1].DeviceID != "online-2" {
+		t.Fatalf("ListDevices() returned %#v, want online devices in original order", items)
+	}
+}
+
 func TestStopHeartbeatCancelsRunningWorker(t *testing.T) {
 	root := t.TempDir()
 

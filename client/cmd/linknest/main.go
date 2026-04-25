@@ -305,6 +305,7 @@ func runDevice(root string, args []string) error {
 		if err != nil {
 			return err
 		}
+		items = device.OnlineOnly(items)
 
 		for _, item := range items {
 			fmt.Printf("%s\t%s\t%s\t%s\t%s\n", item.DeviceID, item.DeviceName, item.DeviceType, item.Status, item.LastSeenAt)

@@ -190,6 +190,24 @@ func List(baseURL string, token string) ([]RemoteDevice, error) {
 	return result.Items, nil
 }
 
+func IsOnline(item RemoteDevice) bool {
+	return strings.EqualFold(strings.TrimSpace(item.Status), "online")
+}
+
+func OnlineOnly(items []RemoteDevice) []RemoteDevice {
+	if len(items) == 0 {
+		return items
+	}
+
+	online := make([]RemoteDevice, 0, len(items))
+	for _, item := range items {
+		if IsOnline(item) {
+			online = append(online, item)
+		}
+	}
+	return online
+}
+
 func DetectLANIP() string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
