@@ -466,7 +466,7 @@ async function setupDevicesPage() {
     <section class="page-header">
       <div>
         <h1 class="page-title">设备视图</h1>
-        <p class="page-copy">这个页面直接读取 <span class="mono">/api/devices</span>。在线状态来自 WebSocket 心跳和服务端离线扫描。</p>
+        <p class="page-copy">这个页面只读取在线设备。在线状态来自 WebSocket 心跳和服务端离线扫描。</p>
       </div>
       <div class="toolbar">
         <span id="devices-auto-status" class="user-chip">自动轮询准备中</span>
@@ -482,19 +482,17 @@ async function setupDevicesPage() {
       if (trigger === "manual" || trigger === "initial") {
         setMessage("正在刷新设备列表...", "info");
       }
-      const { body } = await apiFetch("/api/devices");
+      const { body } = await apiFetch("/api/devices?status=online");
       const items = body.items || [];
-      const onlineItems = items.filter((item) => String(item.status || "").trim().toLowerCase() === "online");
-      const hiddenCount = items.length - onlineItems.length;
       document.getElementById("devices-summary").innerHTML = renderSummaryCards([
-        { label: "在线设备", value: String(onlineItems.length), note: "当前页面只显示在线设备" },
-        { label: "已隐藏离线", value: String(hiddenCount), note: "离线设备不会出现在列表中" },
-        { label: "设备记录", value: String(items.length), note: "服务端保留的全部设备记录" },
+        { label: "在线设备", value: String(items.length), note: "仅显示当前在线设备" },
+        { label: "数据来源", value: "online", note: "/api/devices?status=online" },
+        { label: "刷新间隔", value: `${Math.round(refreshIntervalMs / 1000)}s`, note: "自动轮询最新心跳状态" },
       ]);
-      document.getElementById("devices-table").innerHTML = renderDevicesTable(onlineItems);
+      document.getElementById("devices-table").innerHTML = renderDevicesTable(items);
       setAutoRefreshStatus("devices-auto-status", refreshIntervalMs, new Date());
       if (trigger === "manual" || trigger === "initial") {
-        setMessage(`在线设备列表已刷新，用户 ${user.username} 当前有 ${onlineItems.length} 台在线设备。`, "success");
+        setMessage(`在线设备列表已刷新，用户 ${user.username} 当前有 ${items.length} 台在线设备。`, "success");
       }
     } catch (error) {
       setMessage(error.message, "error");

@@ -39,6 +39,7 @@
 
 - `POST /api/devices/register`
 - `GET /api/devices`
+- `GET /api/devices?status=online`：只返回在线设备，Web UI 设备页使用这个入口避免展示离线设备。
 - `GET /ws/devices?device_id={device_id}`
 
 心跳消息：
