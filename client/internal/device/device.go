@@ -27,11 +27,23 @@ type Profile struct {
 }
 
 type RemoteDevice struct {
-	DeviceID   string `json:"device_id"`
-	DeviceName string `json:"device_name"`
-	DeviceType string `json:"device_type"`
-	Status     string `json:"status"`
-	LastSeenAt string `json:"last_seen_at"`
+	DeviceID    string `json:"device_id"`
+	DeviceName  string `json:"device_name"`
+	DeviceType  string `json:"device_type"`
+	LanIP       string `json:"lan_ip"`
+	P2PEnabled  bool   `json:"p2p_enabled"`
+	P2PPort     int    `json:"p2p_port"`
+	P2PProtocol string `json:"p2p_protocol"`
+	VirtualIP   string `json:"virtual_ip"`
+	Status      string `json:"status"`
+	LastSeenAt  string `json:"last_seen_at"`
+}
+
+type HeartbeatOptions struct {
+	P2PEnabled  bool
+	P2PPort     int
+	P2PProtocol string
+	VirtualIP   string
 }
 
 type deviceListResponse struct {
@@ -244,6 +256,14 @@ func DetectLANIP() string {
 }
 
 func HeartbeatPayload(profile Profile) map[string]interface{} {
+	return HeartbeatPayloadWithOptions(profile, HeartbeatOptions{})
+}
+
+func HeartbeatPayloadWithOptions(profile Profile, options HeartbeatOptions) map[string]interface{} {
+	protocol := strings.TrimSpace(options.P2PProtocol)
+	if protocol == "" {
+		protocol = "http"
+	}
 	return map[string]interface{}{
 		"type":           "heartbeat",
 		"device_id":      profile.DeviceID,
@@ -251,6 +271,10 @@ func HeartbeatPayload(profile Profile) map[string]interface{} {
 		"device_type":    profile.DeviceType,
 		"lan_ip":         DetectLANIP(),
 		"port":           0,
+		"p2p_enabled":    options.P2PEnabled,
+		"p2p_port":       options.P2PPort,
+		"p2p_protocol":   protocol,
+		"virtual_ip":     strings.TrimSpace(options.VirtualIP),
 		"client_version": profile.ClientVersion,
 		"timestamp":      time.Now().Format(time.RFC3339),
 	}

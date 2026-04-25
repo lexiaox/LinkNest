@@ -164,26 +164,31 @@ func ListTasks(baseURL string, token string) ([]RemoteTask, error) {
 }
 
 func Upload(root string, cfg clientconfig.ClientConfig, localPath string) error {
+	_, err := UploadWithResult(root, cfg, localPath)
+	return err
+}
+
+func UploadWithResult(root string, cfg clientconfig.ClientConfig, localPath string) (CompleteUploadResponse, error) {
 	if strings.TrimSpace(cfg.Device.DeviceID) == "" {
-		return errors.New("device is not initialized, run device init first")
+		return CompleteUploadResponse{}, errors.New("device is not initialized, run device init first")
 	}
 
 	absPath, err := filepath.Abs(localPath)
 	if err != nil {
-		return err
+		return CompleteUploadResponse{}, err
 	}
 
 	info, err := os.Stat(absPath)
 	if err != nil {
-		return err
+		return CompleteUploadResponse{}, err
 	}
 	if info.IsDir() {
-		return errors.New("file upload does not support directories in V1")
+		return CompleteUploadResponse{}, errors.New("file upload does not support directories in V1")
 	}
 
 	fileHash, err := ComputeSHA256(absPath)
 	if err != nil {
-		return err
+		return CompleteUploadResponse{}, err
 	}
 
 	chunkSize := cfg.Transfer.ChunkSize
@@ -201,12 +206,12 @@ func Upload(root string, cfg clientconfig.ClientConfig, localPath string) error 
 		TotalChunks: totalChunks,
 	})
 	if err != nil {
-		return err
+		return CompleteUploadResponse{}, err
 	}
 
 	if initResp.Status == "available" {
 		fmt.Printf("file already available file_id=%s\n", initResp.FileID)
-		return nil
+		return CompleteUploadResponse{UploadID: initResp.UploadID, FileID: initResp.FileID, Status: initResp.Status}, nil
 	}
 
 	task := LocalTask{
@@ -221,30 +226,30 @@ func Upload(root string, cfg clientconfig.ClientConfig, localPath string) error 
 		Status:         initResp.Status,
 	}
 	if err := SaveTask(root, task); err != nil {
-		return err
+		return CompleteUploadResponse{}, err
 	}
 
 	if err := uploadMissingChunks(root, cfg, &task, initResp.MissingChunks); err != nil {
-		return err
+		return CompleteUploadResponse{}, err
 	}
 
 	result, err := completeUpload(cfg.ServerURL, cfg.Token, task.UploadID)
 	if err != nil {
-		return err
+		return CompleteUploadResponse{}, err
 	}
 	if len(result.MissingChunks) > 0 {
 		task.Status = "uploading"
 		_ = SaveTask(root, task)
-		return fmt.Errorf("server reports missing chunks: %v", result.MissingChunks)
+		return CompleteUploadResponse{}, fmt.Errorf("server reports missing chunks: %v", result.MissingChunks)
 	}
 
 	task.Status = result.Status
 	if err := SaveTask(root, task); err != nil {
-		return err
+		return CompleteUploadResponse{}, err
 	}
 
 	fmt.Printf("upload completed upload_id=%s file_id=%s\n", result.UploadID, result.FileID)
-	return nil
+	return result, nil
 }
 
 func Download(root string, cfg clientconfig.ClientConfig, fileID string, output string) error {

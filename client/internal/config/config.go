@@ -26,7 +26,16 @@ type DeviceConfig struct {
 }
 
 type TransferConfig struct {
-	ChunkSize int64 `yaml:"chunk_size"`
+	ChunkSize                int64  `yaml:"chunk_size"`
+	P2PEnabled               *bool  `yaml:"p2p_enabled"`
+	P2PHost                  string `yaml:"p2p_host"`
+	P2PPort                  int    `yaml:"p2p_port"`
+	P2PConnectTimeoutSeconds int    `yaml:"p2p_connect_timeout_seconds"`
+	P2PChunkTimeoutSeconds   int    `yaml:"p2p_chunk_timeout_seconds"`
+	P2PMaxRetries            int    `yaml:"p2p_max_retries"`
+	FallbackToCloud          *bool  `yaml:"fallback_to_cloud"`
+	InboxDir                 string `yaml:"inbox_dir"`
+	VirtualIP                string `yaml:"virtual_ip"`
 }
 
 func RootDir() (string, error) {
@@ -45,6 +54,8 @@ func EnsureRoot(root string) error {
 	dirs := []string{
 		root,
 		filepath.Join(root, "tasks"),
+		filepath.Join(root, "transfers"),
+		filepath.Join(root, "inbox"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -79,6 +90,7 @@ func Load(root string) (ClientConfig, error) {
 	if cfg.Transfer.ChunkSize <= 0 {
 		cfg.Transfer.ChunkSize = 4194304
 	}
+	normalizeTransferConfig(root, &cfg.Transfer)
 	return cfg, nil
 }
 
@@ -94,7 +106,56 @@ func Default() ClientConfig {
 	return ClientConfig{
 		ServerURL: "http://127.0.0.1:8080",
 		Transfer: TransferConfig{
-			ChunkSize: 4194304,
+			ChunkSize:                4194304,
+			P2PEnabled:               boolPtr(true),
+			P2PHost:                  "0.0.0.0",
+			P2PPort:                  19090,
+			P2PConnectTimeoutSeconds: 5,
+			P2PChunkTimeoutSeconds:   30,
+			P2PMaxRetries:            2,
+			FallbackToCloud:          boolPtr(true),
 		},
 	}
+}
+
+func normalizeTransferConfig(root string, cfg *TransferConfig) {
+	if cfg.ChunkSize <= 0 {
+		cfg.ChunkSize = 4194304
+	}
+	if strings.TrimSpace(cfg.P2PHost) == "" {
+		cfg.P2PHost = "0.0.0.0"
+	}
+	if cfg.P2PPort <= 0 {
+		cfg.P2PPort = 19090
+	}
+	if cfg.P2PConnectTimeoutSeconds <= 0 {
+		cfg.P2PConnectTimeoutSeconds = 5
+	}
+	if cfg.P2PChunkTimeoutSeconds <= 0 {
+		cfg.P2PChunkTimeoutSeconds = 30
+	}
+	if cfg.P2PMaxRetries < 0 {
+		cfg.P2PMaxRetries = 0
+	}
+	if strings.TrimSpace(cfg.InboxDir) == "" {
+		cfg.InboxDir = filepath.Join(root, "inbox")
+	}
+	if cfg.P2PEnabled == nil {
+		cfg.P2PEnabled = boolPtr(true)
+	}
+	if cfg.FallbackToCloud == nil {
+		cfg.FallbackToCloud = boolPtr(true)
+	}
+}
+
+func P2PEnabledValue(cfg TransferConfig) bool {
+	return cfg.P2PEnabled == nil || *cfg.P2PEnabled
+}
+
+func FallbackToCloudEnabled(cfg TransferConfig) bool {
+	return cfg.FallbackToCloud == nil || *cfg.FallbackToCloud
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

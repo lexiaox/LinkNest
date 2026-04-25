@@ -24,6 +24,12 @@ type Device struct {
 	PublicKey     string `json:"public_key,omitempty"`
 	LanIP         string `json:"lan_ip,omitempty"`
 	Port          int    `json:"port,omitempty"`
+	P2PEnabled    bool   `json:"p2p_enabled"`
+	P2PPort       int    `json:"p2p_port,omitempty"`
+	P2PProtocol   string `json:"p2p_protocol,omitempty"`
+	VirtualIP     string `json:"virtual_ip,omitempty"`
+	PublicIP      string `json:"public_ip,omitempty"`
+	P2PUpdatedAt  string `json:"p2p_updated_at,omitempty"`
 	ClientVersion string `json:"client_version,omitempty"`
 	Status        string `json:"status"`
 	LastSeenAt    string `json:"last_seen_at,omitempty"`
@@ -45,6 +51,11 @@ type Heartbeat struct {
 	DeviceType    string `json:"device_type"`
 	LanIP         string `json:"lan_ip"`
 	Port          int    `json:"port"`
+	P2PEnabled    bool   `json:"p2p_enabled"`
+	P2PPort       int    `json:"p2p_port"`
+	P2PProtocol   string `json:"p2p_protocol"`
+	VirtualIP     string `json:"virtual_ip"`
+	PublicIP      string `json:"public_ip"`
 	ClientVersion string `json:"client_version"`
 	Timestamp     string `json:"timestamp"`
 }
@@ -98,6 +109,8 @@ WHERE id = ?
 func (s *Service) ListByUser(ctx context.Context, userID int64) ([]Device, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, user_id, device_id, device_name, device_type, COALESCE(public_key, ''), COALESCE(lan_ip, ''), COALESCE(port, 0),
+       COALESCE(p2p_enabled, 0), COALESCE(p2p_port, 0), COALESCE(p2p_protocol, ''), COALESCE(virtual_ip, ''),
+       COALESCE(public_ip, ''), COALESCE(p2p_updated_at, ''),
        COALESCE(client_version, ''), status, COALESCE(last_seen_at, ''), created_at, updated_at
 FROM devices
 WHERE user_id = ?
@@ -111,6 +124,7 @@ ORDER BY updated_at DESC, id DESC
 	var devices []Device
 	for rows.Next() {
 		var item Device
+		var p2pEnabled int
 		if err := rows.Scan(
 			&item.ID,
 			&item.UserID,
@@ -120,6 +134,12 @@ ORDER BY updated_at DESC, id DESC
 			&item.PublicKey,
 			&item.LanIP,
 			&item.Port,
+			&p2pEnabled,
+			&item.P2PPort,
+			&item.P2PProtocol,
+			&item.VirtualIP,
+			&item.PublicIP,
+			&item.P2PUpdatedAt,
 			&item.ClientVersion,
 			&item.Status,
 			&item.LastSeenAt,
@@ -128,6 +148,7 @@ ORDER BY updated_at DESC, id DESC
 		); err != nil {
 			return nil, fmt.Errorf("scan device: %w", err)
 		}
+		item.P2PEnabled = p2pEnabled != 0
 		devices = append(devices, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -147,12 +168,18 @@ SET device_name = CASE WHEN ? = '' THEN device_name ELSE ? END,
     device_type = CASE WHEN ? = '' THEN device_type ELSE ? END,
     lan_ip = ?,
     port = ?,
+    p2p_enabled = ?,
+    p2p_port = ?,
+    p2p_protocol = ?,
+    virtual_ip = ?,
+    public_ip = ?,
+    p2p_updated_at = CURRENT_TIMESTAMP,
     client_version = CASE WHEN ? = '' THEN client_version ELSE ? END,
     status = 'online',
     last_seen_at = CURRENT_TIMESTAMP,
     updated_at = CURRENT_TIMESTAMP
 WHERE user_id = ? AND device_id = ?
-`, hb.DeviceName, hb.DeviceName, hb.DeviceType, hb.DeviceType, hb.LanIP, hb.Port, hb.ClientVersion, hb.ClientVersion, userID, hb.DeviceID)
+`, hb.DeviceName, hb.DeviceName, hb.DeviceType, hb.DeviceType, hb.LanIP, hb.Port, boolToInt(hb.P2PEnabled), hb.P2PPort, hb.P2PProtocol, hb.VirtualIP, hb.PublicIP, hb.ClientVersion, hb.ClientVersion, userID, hb.DeviceID)
 	if err != nil {
 		return fmt.Errorf("update heartbeat: %w", err)
 	}
@@ -165,6 +192,10 @@ WHERE user_id = ? AND device_id = ?
 		return ErrDeviceNotFound
 	}
 	return nil
+}
+
+func (s *Service) GetByDeviceID(ctx context.Context, userID int64, deviceID string) (Device, error) {
+	return s.findByDeviceID(ctx, userID, deviceID)
 }
 
 func (s *Service) MarkExpiredOffline(ctx context.Context, threshold time.Time) (int64, error) {
@@ -188,8 +219,11 @@ WHERE status <> 'offline'
 
 func (s *Service) findByDeviceID(ctx context.Context, userID int64, deviceID string) (Device, error) {
 	var item Device
+	var p2pEnabled int
 	err := s.db.QueryRowContext(ctx, `
 SELECT id, user_id, device_id, device_name, device_type, COALESCE(public_key, ''), COALESCE(lan_ip, ''), COALESCE(port, 0),
+       COALESCE(p2p_enabled, 0), COALESCE(p2p_port, 0), COALESCE(p2p_protocol, ''), COALESCE(virtual_ip, ''),
+       COALESCE(public_ip, ''), COALESCE(p2p_updated_at, ''),
        COALESCE(client_version, ''), status, COALESCE(last_seen_at, ''), created_at, updated_at
 FROM devices
 WHERE user_id = ? AND device_id = ?
@@ -202,6 +236,12 @@ WHERE user_id = ? AND device_id = ?
 		&item.PublicKey,
 		&item.LanIP,
 		&item.Port,
+		&p2pEnabled,
+		&item.P2PPort,
+		&item.P2PProtocol,
+		&item.VirtualIP,
+		&item.PublicIP,
+		&item.P2PUpdatedAt,
 		&item.ClientVersion,
 		&item.Status,
 		&item.LastSeenAt,
@@ -214,5 +254,13 @@ WHERE user_id = ? AND device_id = ?
 		}
 		return Device{}, fmt.Errorf("find device: %w", err)
 	}
+	item.P2PEnabled = p2pEnabled != 0
 	return item, nil
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }

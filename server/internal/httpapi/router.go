@@ -18,6 +18,7 @@ import (
 	"linknest/server/internal/middleware"
 	"linknest/server/internal/response"
 	"linknest/server/internal/task"
+	servertransfer "linknest/server/internal/transfer"
 	lnwebsocket "linknest/server/internal/websocket"
 )
 
@@ -26,6 +27,7 @@ type Dependencies struct {
 	Device    *device.Service
 	File      *file.Service
 	Task      *task.Service
+	Transfer  *servertransfer.Service
 	WebSocket *lnwebsocket.Handler
 	StaticDir string
 }
@@ -56,6 +58,10 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	mux.Handle("/api/tasks", middleware.RequireAuth(deps.Auth, methodHandler(http.MethodGet, handleTaskList(deps.Task))))
 	mux.Handle("/api/uploads/", middleware.RequireAuth(deps.Auth, http.HandlerFunc(handleUploadRoutes(deps.File))))
+	mux.Handle("/api/transfers/init", middleware.RequireAuth(deps.Auth, methodHandler(http.MethodPost, handleTransferInit(deps.Transfer))))
+	mux.Handle("/api/transfers/validate-token", middleware.RequireAuth(deps.Auth, methodHandler(http.MethodPost, handleTransferValidateToken(deps.Transfer))))
+	mux.Handle("/api/transfers", middleware.RequireAuth(deps.Auth, methodHandler(http.MethodGet, handleTransferList(deps.Transfer))))
+	mux.Handle("/api/transfers/", middleware.RequireAuth(deps.Auth, http.HandlerFunc(handleTransferRoutes(deps.Transfer))))
 
 	mux.Handle("/ws/devices", middleware.RequireAuth(deps.Auth, deps.WebSocket))
 
@@ -315,6 +321,150 @@ func handleTaskList(service *task.Service) http.HandlerFunc {
 			"items": items,
 		})
 	}
+}
+
+func handleTransferInit(service *servertransfer.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, ok := middleware.CurrentUser(r.Context())
+		if !ok {
+			response.Error(w, http.StatusUnauthorized, "AUTH_INVALID_TOKEN", "invalid token")
+			return
+		}
+
+		var input servertransfer.InitInput
+		if err := decodeJSON(r, &input); err != nil {
+			response.Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+
+		result, err := service.Init(r.Context(), user.ID, input)
+		if err != nil {
+			if errors.Is(err, servertransfer.ErrDeviceNotFound) {
+				response.Error(w, http.StatusNotFound, "DEVICE_NOT_FOUND", "source or target device does not exist")
+				return
+			}
+			response.Error(w, http.StatusBadRequest, "TRANSFER_INIT_FAILED", err.Error())
+			return
+		}
+		response.JSON(w, http.StatusOK, result)
+	}
+}
+
+func handleTransferValidateToken(service *servertransfer.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, ok := middleware.CurrentUser(r.Context())
+		if !ok {
+			response.Error(w, http.StatusUnauthorized, "AUTH_INVALID_TOKEN", "invalid token")
+			return
+		}
+
+		var input servertransfer.ValidateTokenInput
+		if err := decodeJSON(r, &input); err != nil {
+			response.Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+
+		result, err := service.ValidateToken(r.Context(), user.ID, input)
+		if err != nil {
+			response.Error(w, http.StatusUnauthorized, "P2P_TOKEN_INVALID", "p2p transfer token is invalid")
+			return
+		}
+		response.JSON(w, http.StatusOK, result)
+	}
+}
+
+func handleTransferList(service *servertransfer.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, ok := middleware.CurrentUser(r.Context())
+		if !ok {
+			response.Error(w, http.StatusUnauthorized, "AUTH_INVALID_TOKEN", "invalid token")
+			return
+		}
+
+		items, err := service.ListByUser(r.Context(), user.ID)
+		if err != nil {
+			response.Error(w, http.StatusInternalServerError, "TRANSFER_LIST_FAILED", err.Error())
+			return
+		}
+		response.JSON(w, http.StatusOK, map[string]interface{}{"items": items})
+	}
+}
+
+func handleTransferRoutes(service *servertransfer.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, ok := middleware.CurrentUser(r.Context())
+		if !ok {
+			response.Error(w, http.StatusUnauthorized, "AUTH_INVALID_TOKEN", "invalid token")
+			return
+		}
+
+		transferID, action, ok := splitTail(r.URL.Path, "/api/transfers/")
+		if !ok || transferID == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		switch {
+		case r.Method == http.MethodGet && action == "detail":
+			task, err := service.Get(r.Context(), user.ID, transferID)
+			if err != nil {
+				handleTransferError(w, err)
+				return
+			}
+			response.JSON(w, http.StatusOK, task)
+			return
+		case r.Method == http.MethodPost && action == "probe-result":
+			var input servertransfer.ProbeResultInput
+			if err := decodeJSON(r, &input); err != nil {
+				response.Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+				return
+			}
+			task, err := service.ReportProbeResult(r.Context(), user.ID, transferID, input)
+			if err != nil {
+				handleTransferError(w, err)
+				return
+			}
+			response.JSON(w, http.StatusOK, task)
+			return
+		case r.Method == http.MethodPost && action == "complete":
+			var input servertransfer.CompleteInput
+			if err := decodeJSON(r, &input); err != nil {
+				response.Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+				return
+			}
+			task, err := service.Complete(r.Context(), user.ID, transferID, input)
+			if err != nil {
+				handleTransferError(w, err)
+				return
+			}
+			response.JSON(w, http.StatusOK, task)
+			return
+		case r.Method == http.MethodPost && action == "fallback":
+			var input servertransfer.FallbackInput
+			if err := decodeJSON(r, &input); err != nil {
+				response.Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+				return
+			}
+			result, err := service.Fallback(r.Context(), user.ID, transferID, input)
+			if err != nil {
+				handleTransferError(w, err)
+				return
+			}
+			response.JSON(w, http.StatusOK, result)
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}
+}
+
+func handleTransferError(w http.ResponseWriter, err error) {
+	if errors.Is(err, servertransfer.ErrTransferNotFound) {
+		response.Error(w, http.StatusNotFound, "TRANSFER_NOT_FOUND", "transfer task does not exist or does not belong to current user")
+		return
+	}
+	response.Error(w, http.StatusBadRequest, "TRANSFER_FAILED", err.Error())
 }
 
 func handleFileRoutes(service *file.Service) http.HandlerFunc {
