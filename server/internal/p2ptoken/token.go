@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	jwt "github.com/dgrijalva/jwt-go"
+	jwt "github.com/golang-jwt/jwt/v4"
 )
 
 var ErrInvalidToken = errors.New("invalid p2p transfer token")
@@ -21,7 +21,7 @@ type Claims struct {
 	FileHash       string `json:"file_hash"`
 	ChunkSize      int64  `json:"chunk_size"`
 	TotalChunks    int    `json:"total_chunks"`
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
 
 type Service struct {
@@ -58,9 +58,9 @@ func (s *Service) Issue(input IssueInput) (string, time.Time, error) {
 		FileHash:       strings.TrimSpace(input.FileHash),
 		ChunkSize:      input.ChunkSize,
 		TotalChunks:    input.TotalChunks,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expiresAt.Unix(),
-			IssuedAt:  now.Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(now),
 			Subject:   strings.TrimSpace(input.TransferID),
 		},
 	}
@@ -76,7 +76,7 @@ func (s *Service) Issue(input IssueInput) (string, time.Time, error) {
 func (s *Service) Parse(token string) (Claims, error) {
 	claims := &Claims{}
 	parsed, err := jwt.ParseWithClaims(strings.TrimSpace(token), claims, func(parsedToken *jwt.Token) (interface{}, error) {
-		if _, ok := parsedToken.Method.(*jwt.SigningMethodHMAC); !ok {
+		if parsedToken.Method == nil || parsedToken.Method.Alg() != jwt.SigningMethodHS256.Alg() {
 			return nil, ErrInvalidToken
 		}
 		return s.secret, nil
