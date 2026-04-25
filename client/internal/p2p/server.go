@@ -219,6 +219,9 @@ func (s *Server) handleChunk(w http.ResponseWriter, r *http.Request, transferID 
 		return
 	}
 
+	// Limit the body to the declared chunk size plus a small overhead for
+	// protocol framing and headers; this prevents a malicious sender from
+	// exhausting receiver memory with an oversized payload.
 	r.Body = http.MaxBytesReader(w, r.Body, int64(meta.ChunkSize)+1024)
 	raw, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -339,6 +342,8 @@ func (s *Server) validateRequest(r *http.Request, transferID string) (TokenMetad
 		return TokenMetadata{}, errors.New("transfer token target mismatch")
 	}
 
+	// Default to 1 hour when the token does not carry an expiry or it cannot
+	// be parsed; this bounds cache growth without relying on token contents.
 	expiresAt := time.Now().Add(time.Hour)
 	if result.ExpiresAt != "" {
 		if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {

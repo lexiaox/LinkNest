@@ -556,7 +556,7 @@ function renderDevicesTable(items) {
 }
 
 function candidateLabel(item) {
-  if (!item.p2p_enabled) {
+  if (!item.p2p_enabled || !item.p2p_port) {
     return "-";
   }
   const candidates = [];
