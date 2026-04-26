@@ -96,13 +96,27 @@ WHERE id = ?
 }
 
 func (s *Service) ListByUser(ctx context.Context, userID int64) ([]Device, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	return s.listByUserQuery(ctx, userID, "")
+}
+
+func (s *Service) ListOnlineByUser(ctx context.Context, userID int64) ([]Device, error) {
+	return s.listByUserQuery(ctx, userID, "online")
+}
+
+func (s *Service) listByUserQuery(ctx context.Context, userID int64, status string) ([]Device, error) {
+	query := `
 SELECT id, user_id, device_id, device_name, device_type, COALESCE(public_key, ''), COALESCE(lan_ip, ''), COALESCE(port, 0),
        COALESCE(client_version, ''), status, COALESCE(last_seen_at, ''), created_at, updated_at
 FROM devices
-WHERE user_id = ?
-ORDER BY updated_at DESC, id DESC
-`, userID)
+WHERE user_id = ?`
+	args := []interface{}{userID}
+	if status != "" {
+		query += " AND status = ?"
+		args = append(args, status)
+	}
+	query += "\nORDER BY updated_at DESC, id DESC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
 	}
