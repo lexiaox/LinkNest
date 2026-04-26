@@ -242,7 +242,15 @@ func handleDeviceList(service *device.Service) http.HandlerFunc {
 			return
 		}
 
-		items, err := service.ListByUser(r.Context(), user.ID)
+		var (
+			items []device.Device
+			err   error
+		)
+		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("status")), "online") {
+			items, err = service.ListOnlineByUser(r.Context(), user.ID)
+		} else {
+			items, err = service.ListByUser(r.Context(), user.ID)
+		}
 		if err != nil {
 			response.Error(w, http.StatusInternalServerError, "DEVICE_LIST_FAILED", err.Error())
 			return

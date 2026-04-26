@@ -466,7 +466,7 @@ async function setupDevicesPage() {
     <section class="page-header">
       <div>
         <h1 class="page-title">设备视图</h1>
-        <p class="page-copy">这个页面直接读取 <span class="mono">/api/devices</span>。在线状态来自 WebSocket 心跳和服务端离线扫描。</p>
+        <p class="page-copy">这个页面只读取在线设备。在线状态来自 WebSocket 心跳和服务端离线扫描。</p>
       </div>
       <div class="toolbar">
         <span id="devices-auto-status" class="user-chip">自动轮询准备中</span>
@@ -482,7 +482,7 @@ async function setupDevicesPage() {
       if (trigger === "manual" || trigger === "initial") {
         setMessage("正在刷新设备列表...", "info");
       }
-      const { body } = await apiFetch("/api/devices");
+      const { body } = await apiFetch("/api/devices?status=online");
       const items = body.items || [];
       const onlineItems = items.filter((item) => String(item.status || "").trim().toLowerCase() === "online");
       const hiddenCount = items.length - onlineItems.length;
