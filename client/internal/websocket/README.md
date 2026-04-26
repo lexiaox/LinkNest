@@ -1,9 +1,9 @@
 # client/internal/websocket
 
-客户端 WebSocket 目录，负责持续发送设备心跳并处理服务端 ack。当前实现支持显式停止信号，避免 GUI 停止心跳时被阻塞。
+客户端 WebSocket 目录，负责持续发送设备心跳并处理服务端 ack。当前实现支持显式停止信号，避免 GUI 停止心跳时被阻塞；V2 可在心跳中附带 P2P 接收服务状态和端口。
 
 ## 文件结构
 
 - `README.md`：本目录说明。
-- `heartbeat.go`：设备心跳客户端实现，包含可取消的 `RunHeartbeatUntil`。
+- `heartbeat.go`：设备心跳客户端实现，包含可取消的 `RunHeartbeatUntil` 和可携带 P2P 元数据的 `RunHeartbeatUntilWithOptions`。
 - `heartbeat_test.go`：心跳取消与健康连接退出的回归测试。

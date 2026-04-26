@@ -13,7 +13,7 @@ import (
 	"linknest/server/internal/config"
 	"linknest/server/internal/storage"
 
-	jwt "github.com/dgrijalva/jwt-go"
+	jwt "github.com/golang-jwt/jwt/v4"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -65,7 +65,7 @@ type DeleteAccountResult struct {
 
 type Claims struct {
 	UserID int64 `json:"user_id"`
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
 
 func NewService(db *sql.DB, cfg config.AuthConfig, localStorage storage.Local) *Service {
@@ -244,7 +244,7 @@ WHERE id = ?
 func (s *Service) ParseToken(token string) (User, error) {
 	claims := &Claims{}
 	parsed, err := jwt.ParseWithClaims(token, claims, func(parsedToken *jwt.Token) (interface{}, error) {
-		if _, ok := parsedToken.Method.(*jwt.SigningMethodHMAC); !ok {
+		if parsedToken.Method == nil || parsedToken.Method.Alg() != jwt.SigningMethodHS256.Alg() {
 			return nil, ErrInvalidToken
 		}
 		return s.jwtSecret, nil
@@ -275,9 +275,9 @@ func (s *Service) issueToken(user User) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		UserID: user.ID,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: now.Add(s.tokenTTL).Unix(),
-			IssuedAt:  now.Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(s.tokenTTL)),
+			IssuedAt:  jwt.NewNumericDate(now),
 			Subject:   fmt.Sprintf("%d", user.ID),
 		},
 	}

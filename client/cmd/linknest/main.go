@@ -1,16 +1,20 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"linknest/client/internal/auth"
 	clientconfig "linknest/client/internal/config"
 	"linknest/client/internal/device"
+	"linknest/client/internal/p2p"
 	"linknest/client/internal/transfer"
 	clientws "linknest/client/internal/websocket"
 )
@@ -52,6 +56,10 @@ func run(args []string) error {
 		return runFile(root, args[1:])
 	case "task":
 		return runTask(root, args[1:])
+	case "p2p":
+		return runP2P(root, args[1:])
+	case "transfer":
+		return runTransfer(root, args[1:])
 	default:
 		return usage()
 	}
@@ -412,6 +420,183 @@ func runTask(root string, args []string) error {
 	}
 }
 
+func runP2P(root string, args []string) error {
+	if len(args) < 1 {
+		return errors.New("p2p command requires a subcommand")
+	}
+
+	cfg, err := clientconfig.Load(root)
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "status":
+		fmt.Printf("p2p_enabled=%t\n", clientconfig.P2PEnabledValue(cfg.Transfer))
+		fmt.Printf("listen=%s:%d\n", cfg.Transfer.P2PHost, cfg.Transfer.P2PPort)
+		fmt.Printf("protocol=http\n")
+		fmt.Printf("inbox=%s\n", cfg.Transfer.InboxDir)
+		fmt.Printf("virtual_ip=%s\n", strings.TrimSpace(cfg.Transfer.VirtualIP))
+		fmt.Printf("fallback_to_cloud=%t\n", clientconfig.FallbackToCloudEnabled(cfg.Transfer))
+		return nil
+	case "serve":
+		fs := flag.NewFlagSet("p2p serve", flag.ContinueOnError)
+		host := fs.String("host", cfg.Transfer.P2PHost, "p2p listen host")
+		port := fs.Int("port", cfg.Transfer.P2PPort, "p2p listen port")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if !clientconfig.P2PEnabledValue(cfg.Transfer) {
+			return errors.New("p2p is disabled in config")
+		}
+		if strings.TrimSpace(cfg.Token) == "" {
+			return errors.New("token is empty, run auth login first")
+		}
+		profile, err := device.Load(root)
+		if err != nil {
+			return err
+		}
+		cfg.Transfer.P2PHost = *host
+		cfg.Transfer.P2PPort = *port
+
+		server, err := p2p.Start(root, cfg, profile)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("p2p service started addr=%s inbox=%s\n", server.Addr(), cfg.Transfer.InboxDir)
+
+		stopHeartbeat := make(chan struct{})
+		go runP2PHeartbeatLoop(cfg, profile, server.Port(), stopHeartbeat)
+
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		<-sigCh
+		close(stopHeartbeat)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return server.Shutdown(ctx)
+	default:
+		return errors.New("unsupported p2p subcommand")
+	}
+}
+
+func runP2PHeartbeatLoop(cfg clientconfig.ClientConfig, profile device.Profile, port int, stop <-chan struct{}) {
+	options := device.HeartbeatOptions{
+		P2PEnabled:  true,
+		P2PPort:     port,
+		P2PProtocol: "http",
+		VirtualIP:   cfg.Transfer.VirtualIP,
+	}
+	for {
+		err := clientws.RunHeartbeatUntilWithOptions(cfg.ServerURL, cfg.Token, profile, options, 5*time.Second, stop)
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "p2p heartbeat stopped: %v\n", err)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
+func runTransfer(root string, args []string) error {
+	if len(args) < 1 {
+		return errors.New("transfer command requires a subcommand")
+	}
+
+	cfg, err := clientconfig.Load(root)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.Token) == "" {
+		return errors.New("token is empty, run auth login first")
+	}
+
+	switch args[0] {
+	case "send":
+		path, targetDeviceID, err := parseTransferSendArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		return transfer.Send(root, cfg, path, targetDeviceID)
+	case "list":
+		items, err := transfer.ListTransfers(cfg.ServerURL, cfg.Token)
+		if err != nil {
+			return err
+		}
+		for _, item := range items {
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", item.TransferID, item.FileName, item.TargetDeviceID, item.PreferredRoute, item.ActualRoute, item.Status)
+		}
+		return nil
+	case "detail":
+		if len(args) < 2 {
+			return errors.New("transfer detail requires a transfer_id")
+		}
+		item, err := transfer.TransferDetail(cfg.ServerURL, cfg.Token, args[1])
+		if err != nil {
+			return err
+		}
+		printTransferDetail(item)
+		return nil
+	case "resume":
+		if len(args) < 2 {
+			return errors.New("transfer resume requires a transfer_id")
+		}
+		return transfer.ResumeTransfer(root, cfg, args[1])
+	case "fallback":
+		if len(args) < 2 {
+			return errors.New("transfer fallback requires a transfer_id")
+		}
+		return transfer.RequestFallback(cfg.ServerURL, cfg.Token, args[1])
+	default:
+		return errors.New("unsupported transfer subcommand")
+	}
+}
+
+func parseTransferSendArgs(args []string) (string, string, error) {
+	var path string
+	var targetDeviceID string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--to":
+			if i+1 >= len(args) {
+				return "", "", errors.New("--to requires a device_id")
+			}
+			targetDeviceID = args[i+1]
+			i++
+		default:
+			if path == "" {
+				path = args[i]
+			}
+		}
+	}
+	if strings.TrimSpace(path) == "" {
+		return "", "", errors.New("transfer send requires a file path")
+	}
+	if strings.TrimSpace(targetDeviceID) == "" {
+		return "", "", errors.New("transfer send requires --to <device_id>")
+	}
+	return path, targetDeviceID, nil
+}
+
+func printTransferDetail(item transfer.TransferTask) {
+	fmt.Printf("transfer_id=%s\n", item.TransferID)
+	fmt.Printf("file=%s size=%d hash=%s\n", item.FileName, item.FileSize, item.FileHash)
+	fmt.Printf("source=%s target=%s\n", item.SourceDeviceID, item.TargetDeviceID)
+	fmt.Printf("route preferred=%s actual=%s\n", item.PreferredRoute, item.ActualRoute)
+	fmt.Printf("chunks=%d chunk_size=%d\n", item.TotalChunks, item.ChunkSize)
+	fmt.Printf("status=%s\n", item.Status)
+	if strings.TrimSpace(item.SelectedCandidate) != "" {
+		fmt.Printf("candidate=%s\n", item.SelectedCandidate)
+	}
+	if strings.TrimSpace(item.ErrorCode) != "" || strings.TrimSpace(item.ErrorMessage) != "" {
+		fmt.Printf("error=%s %s\n", item.ErrorCode, item.ErrorMessage)
+	}
+}
+
 func usage() error {
 	fmt.Println("LinkNest CLI")
 	fmt.Println("usage:")
@@ -432,5 +617,12 @@ func usage() error {
 	fmt.Println("  linknest file download <file_id> --output ./downloaded-demo.zip")
 	fmt.Println("  linknest file delete <file_id>")
 	fmt.Println("  linknest task list")
+	fmt.Println("  linknest p2p status")
+	fmt.Println("  linknest p2p serve")
+	fmt.Println("  linknest transfer send ./demo.zip --to <device_id>")
+	fmt.Println("  linknest transfer list")
+	fmt.Println("  linknest transfer detail <transfer_id>")
+	fmt.Println("  linknest transfer resume <transfer_id>")
+	fmt.Println("  linknest transfer fallback <transfer_id>")
 	return nil
 }

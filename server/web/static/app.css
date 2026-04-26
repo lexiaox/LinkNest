@@ -281,6 +281,11 @@ button.ghost {
   background: rgba(255, 255, 255, 0.66);
 }
 
+.section-title {
+  margin: 22px 0 0;
+  font-size: 20px;
+}
+
 table {
   width: 100%;
   min-width: 720px;
@@ -329,7 +334,8 @@ tbody tr:last-child td {
 }
 
 .pill.completed,
-.pill.available {
+.pill.available,
+.pill.enabled {
   background: rgba(31, 122, 92, 0.12);
   color: var(--ok);
 }
@@ -340,7 +346,8 @@ tbody tr:last-child td {
   color: var(--warn);
 }
 
-.pill.failed {
+.pill.failed,
+.pill.disabled {
   background: rgba(184, 59, 59, 0.12);
   color: var(--danger);
 }
