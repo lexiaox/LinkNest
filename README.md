@@ -140,6 +140,18 @@ cd ./client/mobile/cmd/linknest-mobile
 fyne package -os android -app-id top.ledouya.linknest.mobile -name LinkNestMobile
 ```
 
+如果要在 WSL/Linux 环境一次性构建 Windows GUI zip 和 Android APK，可以使用本仓库的脚本：
+
+```bash
+GO_BIN=/home/ledouya/.local/lib/go/bin/go \
+FYNE_BIN=/home/ledouya/go/bin/fyne \
+ANDROID_HOME=/home/ledouya/.local/android-sdk \
+PATH=/home/ledouya/.local/mingw-w64/usr/bin:$PATH \
+./scripts/build-gui-artifacts.sh
+```
+
+脚本会输出到 `dist/gui-artifacts/`，并打印每个产物的 SHA-256。Windows GUI 需要 Linux 侧 mingw-w64 交叉编译器；Android APK 需要 Android SDK、build-tools、platforms 和 NDK。
+
 ### iPhone / iPad 能不能做
 
 - 可以共用同一套 Fyne / Go 移动端代码
