@@ -472,7 +472,8 @@ tbody tr:last-child td {
   color: var(--muted);
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   min-height: 46px;
   padding: 0 14px;
@@ -482,7 +483,8 @@ tbody tr:last-child td {
   color: var(--text);
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus {
   outline: 2px solid rgba(176, 85, 45, 0.18);
   border-color: rgba(176, 85, 45, 0.3);
 }
@@ -498,6 +500,14 @@ tbody tr:last-child td {
 .uploader p {
   margin: 0 0 12px;
   color: var(--muted);
+}
+
+.transfer-target-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .progress {
@@ -603,5 +613,9 @@ tbody tr:last-child td {
 
   .page-title {
     font-size: 28px;
+  }
+
+  .transfer-target-panel {
+    grid-template-columns: 1fr;
   }
 }

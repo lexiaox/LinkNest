@@ -53,6 +53,9 @@ type MobileApp struct {
 	devices        []device.RemoteDevice
 	selectedDevice int
 	deviceList     *widget.List
+	targetDeviceID string
+	targetSelect   *widget.Select
+	targetOptions  map[string]string
 
 	files        []transfer.RemoteFile
 	selectedFile int
@@ -362,6 +365,11 @@ func (m *MobileApp) buildDeviceTab() fyne.CanvasObject {
 }
 
 func (m *MobileApp) buildFileTab() fyne.CanvasObject {
+	m.targetSelect = widget.NewSelect(nil, func(value string) {
+		m.targetDeviceID = m.targetDeviceIDFromOption(value)
+	})
+	m.targetSelect.PlaceHolder = "选择目标在线设备"
+
 	m.fileList = widget.NewList(
 		func() int { return len(m.files) },
 		func() fyne.CanvasObject {
@@ -480,8 +488,8 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 		}, m.window)
 	})
 
-	sendButton := widget.NewButton("P2P 发送到选中设备", func() {
-		target, err := m.selectedRemoteDevice()
+	sendButton := widget.NewButton("V2 发送到目标设备", func() {
+		target, err := m.selectedTargetDevice()
 		if err != nil {
 			m.showError(err)
 			return
@@ -526,6 +534,7 @@ func (m *MobileApp) buildFileTab() fyne.CanvasObject {
 	controls := container.NewVBox(
 		refreshButton,
 		uploadButton,
+		accountField("P2P 目标设备", m.targetSelect),
 		sendButton,
 		downloadButton,
 		deleteButton,
@@ -744,6 +753,7 @@ func (m *MobileApp) startAutoRefresh() {
 					m.devices = devices
 					m.deviceList.Refresh()
 					applyListHeight(m.deviceList, len(m.devices), mobileDeviceHeight)
+					m.refreshTargetDeviceOptions()
 				}
 				if taskErr == nil {
 					m.tasks = tasks
@@ -787,6 +797,7 @@ func (m *MobileApp) refreshDevices(silent bool) error {
 	m.selectedDevice = -1
 	m.deviceList.Refresh()
 	applyListHeight(m.deviceList, len(m.devices), mobileDeviceHeight)
+	m.refreshTargetDeviceOptions()
 	m.markRefreshed()
 	return nil
 }
@@ -841,6 +852,7 @@ func (m *MobileApp) applyDevices(items []device.RemoteDevice) {
 	m.selectedDevice = -1
 	m.deviceList.Refresh()
 	applyListHeight(m.deviceList, len(m.devices), mobileDeviceHeight)
+	m.refreshTargetDeviceOptions()
 	m.markRefreshed()
 }
 
@@ -963,6 +975,19 @@ func (m *MobileApp) selectedRemoteDevice() (device.RemoteDevice, error) {
 	return m.devices[m.selectedDevice], nil
 }
 
+func (m *MobileApp) selectedTargetDevice() (device.RemoteDevice, error) {
+	targetID := strings.TrimSpace(m.targetDeviceID)
+	if targetID == "" {
+		return device.RemoteDevice{}, errors.New("请先在文件页选择 P2P 目标在线设备")
+	}
+	for _, item := range m.devices {
+		if item.DeviceID == targetID {
+			return item, nil
+		}
+	}
+	return device.RemoteDevice{}, errors.New("目标设备不在线，请刷新设备列表后重新选择")
+}
+
 func (m *MobileApp) selectedRemoteFile() (transfer.RemoteFile, error) {
 	if m.selectedFile < 0 || m.selectedFile >= len(m.files) {
 		return transfer.RemoteFile{}, errors.New("请先在文件列表中选中一个文件")
@@ -1048,6 +1073,53 @@ func formatTaskItem(item transfer.RemoteTask) string {
 
 func formatTransferItem(item transfer.TransferTask) string {
 	return fmt.Sprintf("%s\n传输ID: %s\n设备: %s -> %s | 路径: %s/%s | 状态: %s | 错误: %s", item.FileName, shortID(item.TransferID), shortID(item.SourceDeviceID), shortID(item.TargetDeviceID), emptyAs(item.PreferredRoute, "-"), emptyAs(item.ActualRoute, "-"), taskStatusText(item.Status), emptyAs(item.ErrorCode, "-"))
+}
+
+func (m *MobileApp) refreshTargetDeviceOptions() {
+	if m.targetSelect == nil {
+		return
+	}
+	currentID := strings.TrimSpace(m.svc.Snapshot().DeviceID)
+	options := make([]string, 0, len(m.devices))
+	optionMap := make(map[string]string, len(m.devices))
+	selected := ""
+	for _, item := range m.devices {
+		if item.DeviceID == "" || item.DeviceID == currentID {
+			continue
+		}
+		option := deviceOption(item.DeviceName, item.DeviceID, item.P2PEnabled, item.P2PPort)
+		options = append(options, option)
+		optionMap[option] = item.DeviceID
+		if item.DeviceID == m.targetDeviceID {
+			selected = option
+		}
+	}
+	m.targetOptions = optionMap
+	m.targetSelect.Options = options
+	if selected != "" {
+		m.targetSelect.SetSelected(selected)
+	} else {
+		m.targetDeviceID = ""
+		m.targetSelect.ClearSelected()
+	}
+	m.targetSelect.Refresh()
+}
+
+func deviceOption(name string, deviceID string, p2pEnabled bool, p2pPort int) string {
+	p2pState := "cloud fallback"
+	if p2pEnabled && p2pPort > 0 {
+		p2pState = fmt.Sprintf("p2p:%d", p2pPort)
+	}
+	return fmt.Sprintf("%s | %s | %s", emptyAs(name, "未命名设备"), shortID(deviceID), p2pState)
+}
+
+func (m *MobileApp) targetDeviceIDFromOption(option string) string {
+	if m.targetOptions != nil {
+		if deviceID := strings.TrimSpace(m.targetOptions[option]); deviceID != "" {
+			return deviceID
+		}
+	}
+	return strings.TrimSpace(option)
 }
 
 func applyListHeight(list *widget.List, count int, height float32) {

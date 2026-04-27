@@ -46,6 +46,8 @@ type DesktopApp struct {
 	devices        []device.RemoteDevice
 	selectedDevice int
 	deviceList     *widget.List
+	targetDeviceID string
+	targetSelect   *widget.Select
 
 	files        []transfer.RemoteFile
 	selectedFile int
@@ -335,6 +337,11 @@ func (d *DesktopApp) buildDeviceTab() fyne.CanvasObject {
 }
 
 func (d *DesktopApp) buildFileTab() fyne.CanvasObject {
+	d.targetSelect = widget.NewSelect(nil, func(value string) {
+		d.targetDeviceID = deviceIDFromOption(value)
+	})
+	d.targetSelect.PlaceHolder = "选择目标在线设备"
+
 	d.fileList = widget.NewList(
 		func() int { return len(d.files) },
 		func() fyne.CanvasObject {
@@ -439,8 +446,8 @@ func (d *DesktopApp) buildFileTab() fyne.CanvasObject {
 		}, d.window)
 	})
 
-	sendButton := widget.NewButton("P2P 发送到选中设备", func() {
-		target, err := d.selectedRemoteDevice()
+	sendButton := widget.NewButton("V2 发送到目标设备", func() {
+		target, err := d.selectedTargetDevice()
 		if err != nil {
 			d.showError(err)
 			return
@@ -471,6 +478,7 @@ func (d *DesktopApp) buildFileTab() fyne.CanvasObject {
 
 	return container.NewBorder(
 		container.NewVBox(
+			widget.NewForm(widget.NewFormItem("P2P 目标设备", d.targetSelect)),
 			container.NewGridWithColumns(5, refreshButton, uploadButton, sendButton, downloadButton, deleteButton),
 			widget.NewSeparator(),
 		),
@@ -624,6 +632,7 @@ func (d *DesktopApp) startAutoRefresh() {
 					d.devices = devices
 					d.deviceList.Refresh()
 					applyListHeight(d.deviceList, len(d.devices), deviceItemHeight)
+					d.refreshTargetDeviceOptions()
 				}
 				if taskErr == nil {
 					d.tasks = tasks
@@ -669,6 +678,7 @@ func (d *DesktopApp) refreshDevices(silent bool) error {
 	d.selectedDevice = -1
 	d.deviceList.Refresh()
 	applyListHeight(d.deviceList, len(d.devices), deviceItemHeight)
+	d.refreshTargetDeviceOptions()
 	d.markRefreshed()
 	return nil
 }
@@ -807,6 +817,19 @@ func (d *DesktopApp) selectedRemoteDevice() (device.RemoteDevice, error) {
 	return d.devices[d.selectedDevice], nil
 }
 
+func (d *DesktopApp) selectedTargetDevice() (device.RemoteDevice, error) {
+	targetID := strings.TrimSpace(d.targetDeviceID)
+	if targetID == "" {
+		return device.RemoteDevice{}, errors.New("请先在文件页选择 P2P 目标在线设备")
+	}
+	for _, item := range d.devices {
+		if item.DeviceID == targetID {
+			return item, nil
+		}
+	}
+	return device.RemoteDevice{}, errors.New("目标设备不在线，请刷新设备列表后重新选择")
+}
+
 func (d *DesktopApp) selectedRemoteFile() (transfer.RemoteFile, error) {
 	if d.selectedFile < 0 || d.selectedFile >= len(d.files) {
 		return transfer.RemoteFile{}, errors.New("请先在文件列表中选中一个文件")
@@ -891,6 +914,49 @@ func formatTaskItem(item transfer.RemoteTask) string {
 
 func formatTransferItem(item transfer.TransferTask) string {
 	return fmt.Sprintf("%s\n传输ID: %s\n设备: %s -> %s | 路径: %s/%s | 状态: %s | 错误: %s", item.FileName, item.TransferID, item.SourceDeviceID, item.TargetDeviceID, emptyAs(item.PreferredRoute, "-"), emptyAs(item.ActualRoute, "-"), taskStatusText(item.Status), emptyAs(item.ErrorCode, "-"))
+}
+
+func (d *DesktopApp) refreshTargetDeviceOptions() {
+	if d.targetSelect == nil {
+		return
+	}
+	currentID := strings.TrimSpace(d.svc.Snapshot().DeviceID)
+	options := make([]string, 0, len(d.devices))
+	selected := ""
+	for _, item := range d.devices {
+		if item.DeviceID == "" || item.DeviceID == currentID {
+			continue
+		}
+		option := deviceOption(item.DeviceName, item.DeviceID, item.P2PEnabled, item.P2PPort)
+		options = append(options, option)
+		if item.DeviceID == d.targetDeviceID {
+			selected = option
+		}
+	}
+	d.targetSelect.Options = options
+	if selected != "" {
+		d.targetSelect.SetSelected(selected)
+	} else {
+		d.targetDeviceID = ""
+		d.targetSelect.ClearSelected()
+	}
+	d.targetSelect.Refresh()
+}
+
+func deviceOption(name string, deviceID string, p2pEnabled bool, p2pPort int) string {
+	p2pState := "cloud fallback"
+	if p2pEnabled && p2pPort > 0 {
+		p2pState = fmt.Sprintf("p2p:%d", p2pPort)
+	}
+	return fmt.Sprintf("%s | %s | %s", emptyAs(name, "未命名设备"), deviceID, p2pState)
+}
+
+func deviceIDFromOption(option string) string {
+	parts := strings.Split(option, " | ")
+	if len(parts) < 2 {
+		return strings.TrimSpace(option)
+	}
+	return strings.TrimSpace(parts[1])
 }
 
 func applyListHeight(list *widget.List, count int, height float32) {
