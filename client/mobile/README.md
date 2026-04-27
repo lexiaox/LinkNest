@@ -9,6 +9,7 @@ Android 构建说明：
 - 入口源码：`./client/mobile/cmd/linknest-mobile`
 - 生成 Android 安装包时，推荐按 Fyne 官方方式用 `fyne package -os android`
 - 当前 Android 端会把本地配置和上传临时文件放在应用沙箱内；下载文件会优先保存到系统公共 Downloads 目录，系统拒绝写入时才回退到应用沙箱 `Documents` 目录
+- 在 WSL/Linux 环境构建时，需要设置 `ANDROID_HOME` 或 `ANDROID_SDK_ROOT` 指向包含 build-tools、platforms 和 NDK 的 Android SDK；也可以直接运行仓库根目录的 `scripts/build-gui-artifacts.sh` 生成 APK。
 
 目录结构：
 

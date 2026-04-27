@@ -579,15 +579,17 @@ async function setupFilesPage() {
   const uploadState = {
     selectedFile: null,
     activeTask: null,
+    selectedTargetDeviceID: "",
   };
+  const webDeviceID = user.username ? `${user.username}-web` : "web-ui";
 
-  renderShell("files", "文件页", "浏览文件资源，并通过浏览器端分片上传把文件送进云端资源池。");
+  renderShell("files", "文件页", "浏览文件资源，并选择在线目标设备发起 V2 P2P 优先传输。");
   const page = document.getElementById("page-content");
   page.innerHTML = `
     <section class="page-header">
       <div>
         <h1 class="page-title">文件视图</h1>
-        <p class="page-copy">上传过程会调用 <span class="mono">init-upload</span>、<span class="mono">missing-chunks</span>、分片上传和 <span class="mono">complete</span>，与 CLI 走同一条 V1 链路。</p>
+        <p class="page-copy">选择本地文件后，可以直接上传到云端资源池，也可以指定一个在线目标设备发起 V2 P2P 优先传输。</p>
       </div>
       <div class="toolbar">
         <span id="files-auto-status" class="user-chip">自动同步准备中</span>
@@ -599,6 +601,16 @@ async function setupFilesPage() {
       <div class="form-row">
         <input id="file-input" type="file" />
         <button id="upload-button" class="primary" type="button">开始上传</button>
+      </div>
+      <div class="transfer-target-panel">
+        <div class="field">
+          <label for="transfer-target-select">P2P 目标在线设备</label>
+          <select id="transfer-target-select"></select>
+        </div>
+        <div class="form-row">
+          <button id="send-transfer-button" class="primary" type="button">发送到目标设备</button>
+          <button id="refresh-target-devices" type="button">刷新目标设备</button>
+        </div>
       </div>
       <div id="upload-stage-grid" class="status-row" style="margin-top:12px">
         <div class="status-box">
@@ -623,6 +635,27 @@ async function setupFilesPage() {
     <div id="files-summary" style="margin-top:18px"></div>
     <div id="files-table" class="table-wrap"></div>
   `;
+
+  async function refreshTargetDevices() {
+    const { body } = await apiFetch("/api/devices?status=online");
+    const items = (body.items || []).filter((item) => item.device_id && item.device_id !== webDeviceID);
+    const select = document.getElementById("transfer-target-select");
+    const previous = uploadState.selectedTargetDeviceID;
+    const placeholder = items.length ? "请选择目标在线设备" : "没有其他在线设备";
+    select.innerHTML =
+      `<option value="">${placeholder}</option>` +
+      items
+        .map((item) => {
+          const p2pText = item.p2p_enabled && Number(item.p2p_port || 0) > 0 ? `p2p:${item.p2p_port}` : "cloud fallback";
+          return `<option value="${escapeHTML(item.device_id)}">${escapeHTML(item.device_name || "未命名设备")} | ${escapeHTML(
+            item.device_id
+          )} | ${escapeHTML(p2pText)}</option>`;
+        })
+        .join("");
+    const stillOnline = items.some((item) => item.device_id === previous);
+    uploadState.selectedTargetDeviceID = stillOnline ? previous : "";
+    select.value = uploadState.selectedTargetDeviceID;
+  }
 
   function renderResumePanel() {
     const tasks = getUploadCache();
@@ -839,6 +872,17 @@ async function setupFilesPage() {
   }
 
   document.getElementById("refresh-files").addEventListener("click", () => refreshFiles("正在刷新文件列表..."));
+  document.getElementById("refresh-target-devices").addEventListener("click", async () => {
+    try {
+      await refreshTargetDevices();
+      setMessage("目标在线设备已刷新。", "success");
+    } catch (error) {
+      setMessage(error.message, "error");
+    }
+  });
+  document.getElementById("transfer-target-select").addEventListener("change", (event) => {
+    uploadState.selectedTargetDeviceID = event.target.value || "";
+  });
   document.getElementById("file-input").addEventListener("change", (event) => {
     uploadState.selectedFile = event.target.files && event.target.files[0] ? event.target.files[0] : null;
     if (uploadState.selectedFile) {
@@ -861,8 +905,29 @@ async function setupFilesPage() {
       setMessage(error.message, "error");
     }
   });
+  document.getElementById("send-transfer-button").addEventListener("click", async () => {
+    const file = uploadState.selectedFile;
+    if (!file) {
+      setMessage("先选择一个要发送的本地文件。", "error");
+      return;
+    }
+    if (!uploadState.selectedTargetDeviceID) {
+      setMessage("先选择一个 P2P 目标在线设备。", "error");
+      return;
+    }
+
+    try {
+      await sendTransferFromBrowser(user, file, uploadState.selectedTargetDeviceID, uploadState, renderResumePanel);
+      document.getElementById("file-input").value = "";
+      uploadState.selectedFile = null;
+      await refreshFiles("V2 传输完成，正在刷新文件列表...");
+    } catch (error) {
+      setMessage(error.message, "error");
+    }
+  });
 
   renderResumePanel();
+  await refreshTargetDevices();
   await refreshFiles("正在刷新文件列表...");
   await syncUploadTasks("initial");
   setupAutoRefresh(syncUploadTasks, refreshIntervalMs);
@@ -972,19 +1037,22 @@ function bindDeleteButtons() {
   });
 }
 
-async function uploadFileFromBrowser(user, file, uploadState, renderResumePanel) {
+async function uploadFileFromBrowser(user, file, uploadState, renderResumePanel, precomputedHash) {
   const chunkSize = 4 * 1024 * 1024;
   const totalChunks = Math.ceil(file.size / chunkSize) || 1;
-  updateProgress({
-    percent: 2,
-    stage: "计算文件摘要",
-    meta: "正在计算文件 SHA-256...",
-    completedChunks: 0,
-    totalChunks,
-    uploadedBytes: 0,
-    totalBytes: file.size,
-  });
-  const fileHash = await hashBlob(file);
+  let fileHash = precomputedHash;
+  if (!fileHash) {
+    updateProgress({
+      percent: 2,
+      stage: "计算文件摘要",
+      meta: "正在计算文件 SHA-256...",
+      completedChunks: 0,
+      totalChunks,
+      uploadedBytes: 0,
+      totalBytes: file.size,
+    });
+    fileHash = await hashBlob(file);
+  }
   const deviceId = user.username ? `${user.username}-web` : "web-ui";
 
   updateProgress({
@@ -1037,7 +1105,7 @@ async function uploadFileFromBrowser(user, file, uploadState, renderResumePanel)
       uploadedBytes: file.size,
       totalBytes: file.size,
     });
-    return;
+    return { fileId: upload.file_id, fileHash };
   }
 
   const task = {
@@ -1060,7 +1128,123 @@ async function uploadFileFromBrowser(user, file, uploadState, renderResumePanel)
   upsertUploadCache(task);
   renderResumePanel();
 
-  await continueUploadTask(user, file, task, uploadState, renderResumePanel);
+  return continueUploadTask(user, file, task, uploadState, renderResumePanel);
+}
+
+async function sendTransferFromBrowser(user, file, targetDeviceID, uploadState, renderResumePanel) {
+  const chunkSize = 4 * 1024 * 1024;
+  const totalChunks = Math.ceil(file.size / chunkSize) || 1;
+  const sourceDeviceID = user.username ? `${user.username}-web` : "web-ui";
+
+  updateProgress({
+    percent: 2,
+    stage: "计算文件摘要",
+    meta: "正在计算文件 SHA-256，并准备 V2 transfer init...",
+    completedChunks: 0,
+    totalChunks,
+    uploadedBytes: 0,
+    totalBytes: file.size,
+  });
+  const fileHash = await hashBlob(file);
+  await registerWebDevice(sourceDeviceID);
+
+  updateProgress({
+    percent: 6,
+    stage: "初始化 V2 传输",
+    meta: `正在向服务端申请目标设备 ${targetDeviceID} 的 P2P 候选地址。`,
+    completedChunks: 0,
+    totalChunks,
+    uploadedBytes: 0,
+    totalBytes: file.size,
+  });
+  const initResult = await apiFetch("/api/transfers/init", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source_device_id: sourceDeviceID,
+      target_device_id: targetDeviceID,
+      file_name: file.name,
+      file_size: file.size,
+      file_hash: fileHash,
+      chunk_size: chunkSize,
+      total_chunks: totalChunks,
+    }),
+  });
+  const transfer = initResult.body;
+
+  if (transfer.preferred_route === "p2p" && transfer.transfer_token && (transfer.p2p_candidates || []).length) {
+    try {
+      const candidate = await probeBrowserCandidates(transfer, sourceDeviceID, fileHash);
+      await apiFetch(`/api/transfers/${transfer.transfer_id}/probe-result`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ success: true, selected_candidate: candidate }),
+      });
+      await sendBrowserP2PChunks(file, transfer, candidate, chunkSize, totalChunks, fileHash);
+      await apiFetch(`/api/transfers/${transfer.transfer_id}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          route: "p2p",
+          file_hash: fileHash,
+          received_chunks: totalChunks,
+        }),
+      });
+      updateProgress({
+        percent: 100,
+        stage: "P2P 传输完成",
+        meta: `文件已发送到目标设备，transfer_id=${transfer.transfer_id}`,
+        completedChunks: totalChunks,
+        totalChunks,
+        uploadedBytes: file.size,
+        totalBytes: file.size,
+      });
+      setMessage(`V2 P2P 传输完成：${file.name}`, "success");
+      return;
+    } catch (error) {
+      await apiFetch(`/api/transfers/${transfer.transfer_id}/fallback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: "WEB_P2P_FAILED",
+          message: error.message,
+        }),
+      }).catch(() => {});
+      setMessage(`P2P 直传失败，正在回退云端链路：${error.message}`, "info");
+      const upload = await uploadFileFromBrowser(user, file, uploadState, renderResumePanel, fileHash);
+      await apiFetch(`/api/transfers/${transfer.transfer_id}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          route: "cloud",
+          file_id: upload.fileId,
+          file_hash: fileHash,
+        }),
+      });
+      setMessage(`V2 cloud fallback 传输完成：${file.name}`, "success");
+      return;
+    }
+  }
+
+  await apiFetch(`/api/transfers/${transfer.transfer_id}/fallback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      reason: "WEB_CLOUD_FALLBACK",
+      message: "web ui used cloud fallback",
+    }),
+  }).catch(() => {});
+  const upload = await uploadFileFromBrowser(user, file, uploadState, renderResumePanel, fileHash);
+  await apiFetch(`/api/transfers/${transfer.transfer_id}/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      route: "cloud",
+      file_id: upload.fileId,
+      file_hash: fileHash,
+    }),
+  });
+  setMessage(`V2 cloud fallback 传输完成：${file.name}`, "success");
 }
 
 async function registerWebDevice(deviceId) {
@@ -1229,6 +1413,7 @@ async function continueUploadTask(user, file, task, uploadState, renderResumePan
       totalBytes: file.size,
     });
     setMessage(`文件 ${file.name} 上传完成。`, "success");
+    return { fileId: completeResult.body.file_id, fileHash: task.fileHash };
   } catch (error) {
     task.status = "failed";
     task.lastError = error.message;
@@ -1283,6 +1468,117 @@ async function hashBlob(blob) {
     return bytesToHex(new Uint8Array(digest));
   }
   return sha256Fallback(new Uint8Array(buffer));
+}
+
+async function probeBrowserCandidates(transfer, sourceDeviceID, fileHash) {
+  const candidates = [...(transfer.p2p_candidates || [])].sort((left, right) => routePriority(left) - routePriority(right));
+  let lastError = null;
+  for (const candidate of candidates) {
+    const started = performance.now();
+    try {
+      await p2pJSON(candidate, "/p2p/v1/probe", transfer.transfer_token, {
+        transfer_id: transfer.transfer_id,
+        source_device_id: sourceDeviceID,
+        file_hash: fileHash,
+      });
+      return {
+        ...candidate,
+        rtt_ms: Math.max(0, Math.round(performance.now() - started)),
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("没有可用的 P2P 候选地址");
+}
+
+async function sendBrowserP2PChunks(file, transfer, candidate, chunkSize, totalChunks, fileHash) {
+  let uploadedBytes = 0;
+  for (let index = 0; index < totalChunks; index += 1) {
+    const start = index * chunkSize;
+    const end = Math.min(file.size, start + chunkSize);
+    const chunk = file.slice(start, end);
+    const chunkHash = await hashBlob(chunk);
+    updateProgress({
+      percent: 10 + Math.round((index / Math.max(totalChunks, 1)) * 84),
+      stage: "P2P 分片发送",
+      meta: `正在发送第 ${index + 1} / ${totalChunks} 个分片到目标设备。`,
+      completedChunks: index,
+      totalChunks,
+      uploadedBytes,
+      totalBytes: file.size,
+    });
+    await p2pBinary(candidate, `/p2p/v1/transfers/${transfer.transfer_id}/chunks/${index}`, transfer.transfer_token, chunk, chunkHash);
+    uploadedBytes += chunk.size;
+  }
+
+  updateProgress({
+    percent: 96,
+    stage: "目标设备合并",
+    meta: "分片已发送完毕，正在请求目标设备合并并校验整体 hash。",
+    completedChunks: totalChunks,
+    totalChunks,
+    uploadedBytes: file.size,
+    totalBytes: file.size,
+  });
+  await p2pJSON(candidate, `/p2p/v1/transfers/${transfer.transfer_id}/complete`, transfer.transfer_token, {
+    file_hash: fileHash,
+    total_chunks: totalChunks,
+  });
+}
+
+async function p2pJSON(candidate, path, token, payload) {
+  const response = await fetch(candidateURL(candidate, path), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload || {}),
+  });
+  if (!response.ok) {
+    throw new Error(await p2pErrorMessage(response));
+  }
+  const contentType = response.headers.get("content-type") || "";
+  return contentType.includes("application/json") ? response.json() : response.text();
+}
+
+async function p2pBinary(candidate, path, token, blob, chunkHash) {
+  const response = await fetch(candidateURL(candidate, path), {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/octet-stream",
+      "X-Chunk-Hash": chunkHash,
+    },
+    body: blob,
+  });
+  if (!response.ok) {
+    throw new Error(await p2pErrorMessage(response));
+  }
+}
+
+async function p2pErrorMessage(response) {
+  const text = await response.text().catch(() => "");
+  return `P2P ${response.status}: ${text || response.statusText}`;
+}
+
+function candidateURL(candidate, path) {
+  const protocol = candidate.protocol || "http";
+  const host = String(candidate.host || "");
+  const normalizedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `${protocol}://${normalizedHost}:${Number(candidate.port || 0)}${path}`;
+}
+
+function routePriority(candidate) {
+  switch (candidate.network_type) {
+    case "lan":
+      return 0;
+    case "virtual_lan":
+      return 1;
+    default:
+      return 2;
+  }
 }
 
 function bytesToHex(bytes) {

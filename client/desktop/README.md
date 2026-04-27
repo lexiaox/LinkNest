@@ -11,6 +11,7 @@ Windows 原生构建说明：
 - 由于 Fyne 的 Windows 图形栈依赖 `CGO`，本机需要可用的 `gcc`/`g++` 工具链
 - 推荐使用 MSYS2 UCRT64 的 `gcc` / `g++`
 - 如果本机只有 Go 而没有 C 编译器，WSL 侧 `go test ./...` 仍然可以通过，但 Windows GUI 可执行文件无法直接编出来
+- 在 WSL/Linux 交叉编译 Windows GUI 时，需要 Linux 侧 `mingw-w64`，并通过 `GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc-posix` 构建；也可以直接运行仓库根目录的 `scripts/build-gui-artifacts.sh`。
 
 目录结构：
 
