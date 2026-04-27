@@ -48,6 +48,7 @@ type DesktopApp struct {
 	deviceList     *widget.List
 	targetDeviceID string
 	targetSelect   *widget.Select
+	targetOptions  map[string]string
 
 	files        []transfer.RemoteFile
 	selectedFile int
@@ -338,7 +339,11 @@ func (d *DesktopApp) buildDeviceTab() fyne.CanvasObject {
 
 func (d *DesktopApp) buildFileTab() fyne.CanvasObject {
 	d.targetSelect = widget.NewSelect(nil, func(value string) {
-		d.targetDeviceID = deviceIDFromOption(value)
+		if id, ok := d.targetOptions[value]; ok && strings.TrimSpace(id) != "" {
+			d.targetDeviceID = strings.TrimSpace(id)
+			return
+		}
+		d.targetDeviceID = strings.TrimSpace(value)
 	})
 	d.targetSelect.PlaceHolder = "选择目标在线设备"
 
@@ -922,6 +927,7 @@ func (d *DesktopApp) refreshTargetDeviceOptions() {
 	}
 	currentID := strings.TrimSpace(d.svc.Snapshot().DeviceID)
 	options := make([]string, 0, len(d.devices))
+	optionMap := make(map[string]string, len(d.devices))
 	selected := ""
 	for _, item := range d.devices {
 		if item.DeviceID == "" || item.DeviceID == currentID {
@@ -929,10 +935,12 @@ func (d *DesktopApp) refreshTargetDeviceOptions() {
 		}
 		option := deviceOption(item.DeviceName, item.DeviceID, item.P2PEnabled, item.P2PPort)
 		options = append(options, option)
+		optionMap[option] = item.DeviceID
 		if item.DeviceID == d.targetDeviceID {
 			selected = option
 		}
 	}
+	d.targetOptions = optionMap
 	d.targetSelect.Options = options
 	if selected != "" {
 		d.targetSelect.SetSelected(selected)
@@ -949,14 +957,6 @@ func deviceOption(name string, deviceID string, p2pEnabled bool, p2pPort int) st
 		p2pState = fmt.Sprintf("p2p:%d", p2pPort)
 	}
 	return fmt.Sprintf("%s | %s | %s", emptyAs(name, "未命名设备"), deviceID, p2pState)
-}
-
-func deviceIDFromOption(option string) string {
-	parts := strings.Split(option, " | ")
-	if len(parts) < 2 {
-		return strings.TrimSpace(option)
-	}
-	return strings.TrimSpace(parts[1])
 }
 
 func applyListHeight(list *widget.List, count int, height float32) {

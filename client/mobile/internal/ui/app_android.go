@@ -1110,7 +1110,7 @@ func deviceOption(name string, deviceID string, p2pEnabled bool, p2pPort int) st
 	if p2pEnabled && p2pPort > 0 {
 		p2pState = fmt.Sprintf("p2p:%d", p2pPort)
 	}
-	return fmt.Sprintf("%s | %s | %s", emptyAs(name, "未命名设备"), shortID(deviceID), p2pState)
+	return fmt.Sprintf("%s | %s | %s", emptyAs(name, "未命名设备"), deviceID, p2pState)
 }
 
 func (m *MobileApp) targetDeviceIDFromOption(option string) string {

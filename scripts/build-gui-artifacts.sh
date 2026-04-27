@@ -44,6 +44,16 @@ if [ -z "$ANDROID_NDK" ] || [ ! -d "$ANDROID_NDK" ]; then
   exit 1
 fi
 
+if ! command -v zip >/dev/null 2>&1; then
+  echo "zip not found. Install zip (e.g. apt-get install zip)." >&2
+  exit 1
+fi
+
+if ! command -v sha256sum >/dev/null 2>&1; then
+  echo "sha256sum not found. Install coreutils (e.g. apt-get install coreutils)." >&2
+  exit 1
+fi
+
 echo "Building Windows GUI..."
 (
   cd "$ROOT_DIR"

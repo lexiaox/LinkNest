@@ -779,7 +779,6 @@ async function setupFilesPage() {
     const tasks = getUploadCache();
     const liveTasks = tasks.filter(isLiveUploadTask);
     setAutoRefreshStatus("files-auto-status", refreshIntervalMs, new Date());
-    await refreshTargetDevices().catch(() => {});
 
     if (!liveTasks.length) {
       if (trigger === "initial") {
@@ -1038,19 +1037,22 @@ function bindDeleteButtons() {
   });
 }
 
-async function uploadFileFromBrowser(user, file, uploadState, renderResumePanel) {
+async function uploadFileFromBrowser(user, file, uploadState, renderResumePanel, precomputedHash) {
   const chunkSize = 4 * 1024 * 1024;
   const totalChunks = Math.ceil(file.size / chunkSize) || 1;
-  updateProgress({
-    percent: 2,
-    stage: "计算文件摘要",
-    meta: "正在计算文件 SHA-256...",
-    completedChunks: 0,
-    totalChunks,
-    uploadedBytes: 0,
-    totalBytes: file.size,
-  });
-  const fileHash = await hashBlob(file);
+  let fileHash = precomputedHash;
+  if (!fileHash) {
+    updateProgress({
+      percent: 2,
+      stage: "计算文件摘要",
+      meta: "正在计算文件 SHA-256...",
+      completedChunks: 0,
+      totalChunks,
+      uploadedBytes: 0,
+      totalBytes: file.size,
+    });
+    fileHash = await hashBlob(file);
+  }
   const deviceId = user.username ? `${user.username}-web` : "web-ui";
 
   updateProgress({
@@ -1209,6 +1211,18 @@ async function sendTransferFromBrowser(user, file, targetDeviceID, uploadState, 
         }),
       }).catch(() => {});
       setMessage(`P2P 直传失败，正在回退云端链路：${error.message}`, "info");
+      const upload = await uploadFileFromBrowser(user, file, uploadState, renderResumePanel, fileHash);
+      await apiFetch(`/api/transfers/${transfer.transfer_id}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          route: "cloud",
+          file_id: upload.fileId,
+          file_hash: fileHash,
+        }),
+      });
+      setMessage(`V2 cloud fallback 传输完成：${file.name}`, "success");
+      return;
     }
   }
 
@@ -1220,7 +1234,7 @@ async function sendTransferFromBrowser(user, file, targetDeviceID, uploadState, 
       message: "web ui used cloud fallback",
     }),
   }).catch(() => {});
-  const upload = await uploadFileFromBrowser(user, file, uploadState, renderResumePanel);
+  const upload = await uploadFileFromBrowser(user, file, uploadState, renderResumePanel, fileHash);
   await apiFetch(`/api/transfers/${transfer.transfer_id}/complete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
